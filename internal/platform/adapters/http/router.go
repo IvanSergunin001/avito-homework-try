@@ -3,21 +3,29 @@
 package http
 
 import (
+	"database/sql"
 	"log/slog"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
+	"github.com/IvanSergunin001/Test157/internal/platform/adapters/postgres"
+	"github.com/IvanSergunin001/Test157/internal/platform/application"
 )
 
-// NewRouter собирает роутер площадки: общая обвязка, проба здоровья и поверхности API.
+// NewRouter собирает площадку целиком: хранилище поверх базы, сценарии над ним и роутер
+// с общей обвязкой и поверхностями API. Сборка живёт здесь, а не в `cmd`, чтобы тест шва
+// поднимал ту же самую площадку, что и запуск, а не её похожую копию.
+//
 // Клиентская поверхность (`/api/v1`) уже смонтирована; партнёрская и админская
 // монтируются сюда на своих этапах — их серверные интерфейсы уже сгенерированы по
 // спецификациям.
-func NewRouter(log *slog.Logger) *chi.Mux {
+func NewRouter(log *slog.Logger, db *sql.DB) *chi.Mux {
+	showcase := application.NewShowcase(postgres.NewRestaurants(db))
+
 	r := httpx.NewRouter(log)
 
-	mountCustomerAPI(r)
+	mountCustomerAPI(r, showcase, log)
 
 	return r
 }
