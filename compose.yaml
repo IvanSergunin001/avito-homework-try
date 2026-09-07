@@ -49,6 +49,10 @@ services:
       PLATFORM_HTTP_PORT: ${PLATFORM_HTTP_PORT:-8080}
       PLATFORM_SHUTDOWN_TIMEOUT: ${PLATFORM_SHUTDOWN_TIMEOUT:-10s}
       PLATFORM_LOG_LEVEL: ${PLATFORM_LOG_LEVEL:-info}
+      # Админский токен площадки: им закрыты онбординг заведений и операции саппорта.
+      # Значение по умолчанию годится только для демо — оно лежит в репозитории и
+      # известно всем, кто его открывал.
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:-demo-admin-token}
       # Служба подключается к уже накатанной базе: мигрирует отдельный шаг выше.
       PLATFORM_DATABASE_DSN: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
     ports:

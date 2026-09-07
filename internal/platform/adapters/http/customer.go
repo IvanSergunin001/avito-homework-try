@@ -314,17 +314,10 @@ func writeCustomerProblem(
 	})
 }
 
-// writeCustomerFailure отвечает на отказ по вине площадки. Причина уходит в лог, а не
-// клиенту: наружу она рассказала бы об устройстве службы, а выбрать по ней ветку
-// поведения клиент всё равно не может — ему остаётся повторить запрос позже.
+// writeCustomerFailure отвечает на отказ по вине площадки: он одинаков на всех её
+// поверхностях — без причины наружу и с причиной в логе.
 func (a customerAPI) writeCustomerFailure(w http.ResponseWriter, r *http.Request, err error) {
-	a.log.ErrorContext(r.Context(), "customer request failed", slog.Any("error", err))
-
-	problem.Write(r.Context(), w, http.StatusInternalServerError, internalProblem{
-		Type:   problem.DefaultType,
-		Title:  "Внутренняя ошибка",
-		Status: http.StatusInternalServerError,
-	})
+	writeInternalFailure(a.log, w, r, err)
 }
 
 // internalProblem — отказ по вине площадки. Он остаётся в формате problem+json, но без

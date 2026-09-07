@@ -78,14 +78,19 @@ FROM alpine:3.22 AS migrate
 COPY --from=goose /go/bin/goose /usr/local/bin/goose
 COPY internal/platform/migrations/*.sql /migrations/platform/
 COPY internal/restaurant/migrations/*.sql /migrations/restaurant/
+# Демонстрационные данные — отдельный контекст со своим журналом: они часть запуска демо,
+# а не часть схемы. Тестам они не накатываются (см. internal/pkg/testdb), иначе каждый
+# тест, который считает заведения, считал бы вместе со своими ещё и демонстрационное.
+COPY internal/platform/migrations/seed/*.sql /migrations/platform_seed/
 # У каждого контекста свой каталог миграций и свой журнал применённых. Журналы лежат в
 # public, а не в самих схемах: goose создаёт журнал до первой миграции, а первая миграция
-# как раз и создаёт схему.
+# как раз и создаёт схему. Демо-данные идут последними: они вставляют строки в таблицы,
+# которые заводят миграции схемы.
 COPY <<'SCRIPT' /usr/local/bin/migrate
 #!/bin/sh
 set -eu
 
-for context in platform restaurant; do
+for context in platform restaurant platform_seed; do
 	echo "== ${context}: goose $*"
 	goose -table "public.goose_${context}_version" -dir "/migrations/${context}" "$@"
 done
