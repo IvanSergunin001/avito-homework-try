@@ -173,3 +173,40 @@ func (p *platform) restaurant(t *testing.T, name string, working bool) uuid.UUID
 
 	return id
 }
+
+// menuItem — позиция меню, которую тест кладёт заведению. Нули полей — обычная позиция:
+// без описания, бесплатная и в наличии, — поэтому тест называет только то, что проверяет.
+type menuItem struct {
+	// Name — название, по которому позицию видно в меню и находит поиск.
+	Name string
+	// Description — описание позиции; пустое означает, что заведение его не дало.
+	Description string
+	// Price — цена в копейках.
+	Price int64
+	// OutOfStock — позиция в стоп-листе заведения.
+	OutOfStock bool
+}
+
+// addProduct кладёт позицию в меню заведения и возвращает её идентификатор.
+//
+// Позиция появляется прямо в базе: синхронизации каталога на этом этапе ещё нет, а
+// подменять хранилище нечем — оно настоящее. Как только каталог начнёт приезжать от
+// заведения, исходное состояние будет готовиться им.
+func (p *platform) addProduct(t *testing.T, restaurant uuid.UUID, item menuItem) uuid.UUID {
+	t.Helper()
+
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("сгенерировать идентификатор товара: %v", err)
+	}
+
+	_, err = p.db.ExecContext(t.Context(), `
+		INSERT INTO platform.products (id, restaurant_id, name, description, price, is_available)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		id, restaurant, item.Name, item.Description, item.Price, !item.OutOfStock)
+	if err != nil {
+		t.Fatalf("завести товар %q: %v", item.Name, err)
+	}
+
+	return id
+}
