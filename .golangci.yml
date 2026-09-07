@@ -1,0 +1,64 @@
+# Конфигурация линтера лежит в репозитории и одинакова локально и в CI:
+# `make lint` запускает golangci-lint в контейнере именно с ней.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - bodyclose      # не закрытое тело ответа — утечка соединений в клиенте площадки
+    - contextcheck   # запрос наружу обязан наследовать контекст входящего запроса
+    - errorlint      # сравнение ошибок через errors.Is/As, а не ==
+    - gocritic
+    - gosec
+    - misspell
+    - noctx          # HTTP-запрос без контекста нельзя ни отменить, ни ограничить таймаутом
+    - nolintlint     # каждое подавление — с причиной
+    - revive
+    - sloglint       # логи только структурированные и однообразные
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+  settings:
+    sloglint:
+      # Ключ-значение вперемешку с slog.Attr читается хуже, чем один стиль.
+      attr-only: true
+      context: scope
+      static-msg: true
+    revive:
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: early-return
+        - name: unnecessary-stmt
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    rules:
+      # Каталоги и пакеты адаптеров именуются snake_case (`restaurant_client`) — так имя
+      # пакета совпадает с именем каталога и с термином из спецификации. Общий запрет на
+      # подчёркивания снимаем точечно, только для имён пакетов.
+      - linters: [staticcheck]
+        text: "ST1003: should not use underscores in package names"
+      - linters: [revive]
+        text: "var-naming: avoid meaningful underscores in package names"
+      # В тестах допустимы вольности, за которые в бою бьют по рукам.
+      - path: _test\.go$
+        linters: [gosec, noctx, unparam]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/IvanSergunin001/Test157
