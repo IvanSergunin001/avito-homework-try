@@ -21,11 +21,13 @@ import (
 // монтируются сюда на своих этапах — их серверные интерфейсы уже сгенерированы по
 // спецификациям.
 func NewRouter(log *slog.Logger, db *sql.DB) *chi.Mux {
-	showcase := application.NewShowcase(postgres.NewRestaurants(db))
+	restaurants := postgres.NewRestaurants(db)
+	showcase := application.NewShowcase(restaurants)
+	catalog := application.NewCatalog(restaurants, postgres.NewProducts(db))
 
 	r := httpx.NewRouter(log)
 
-	mountCustomerAPI(r, showcase, log)
+	mountCustomerAPI(r, showcase, catalog, log)
 
 	return r
 }
