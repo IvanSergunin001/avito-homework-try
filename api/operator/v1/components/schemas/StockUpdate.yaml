@@ -1,0 +1,7 @@
+type: object
+description: Новый остаток позиции — целиком, а не приращением.
+required:
+  - stock
+properties:
+  stock:
+    $ref: 'Stock.yaml'

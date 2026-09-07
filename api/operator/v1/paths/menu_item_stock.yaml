@@ -1,0 +1,30 @@
+put:
+  operationId: setStock
+  summary: Задать остаток позиции
+  description: |
+    Остаток задаётся целиком, а не приращением: оператор пересчитал и сообщил, сколько
+    осталось, — повтор запроса по таймауту не должен списать порцию дважды.
+
+    Позиция с нулевым остатком уезжает площадке недоступной, даже если она не в
+    стоп-листе: заказывать нечего.
+  tags:
+    - menu
+  parameters:
+    - $ref: '../components/parameters/MenuItemId.yaml'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas/StockUpdate.yaml'
+  responses:
+    '200':
+      description: Остаток записан.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/MenuItem.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '404':
+      $ref: '../components/responses/NotFound.yaml'

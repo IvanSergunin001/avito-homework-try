@@ -1,0 +1,9 @@
+type: object
+description: |
+  Отметка стоп-листа. Истина — позиции сейчас нет, ложь — снова есть.
+required:
+  - in_stop_list
+properties:
+  in_stop_list:
+    type: boolean
+    example: true

@@ -1,73 +1,57 @@
 package http_test
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
-// pageOfMenuItems — страница меню глазами площадки: разбираем её так же, как разбирала бы
-// синхронизация каталога, — по схеме из партнёрского контракта, а не по типам коробки.
-type pageOfMenuItems struct {
-	Items []json.RawMessage `json:"items"`
-	Page  struct {
-		Limit  int   `json:"limit"`
-		Offset int   `json:"offset"`
-		Total  int64 `json:"total"`
-	} `json:"page"`
+// contractItem — позиция меню глазами площадки: разбираем её так же, как разбирала бы
+// синхронизация каталога, — по схеме партнёрского контракта, а не по типам коробки.
+// Остатка и отметки стоп-листа здесь нет: контракт их не обещает.
+type contractItem struct {
+	ExternalID  string  `json:"external_id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Price       int64   `json:"price"`
+	IsAvailable bool    `json:"is_available"`
 }
 
-// problemDocument — отказ в формате problem+json.
-type problemDocument struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail"`
-	Code   string `json:"code"`
+// contractPage — страница меню, отданная по партнёрскому контракту.
+type contractPage struct {
+	Items []contractItem `json:"items"`
+	Page  pageMeta       `json:"page"`
 }
 
-func menuPage(t *testing.T, srv *httptest.Server, path string) pageOfMenuItems {
+// menuGivenToPlatform читает страницу меню так, как её читала бы площадка.
+func (b *box) menuGivenToPlatform(t *testing.T, query string) contractPage {
 	t.Helper()
 
-	resp := get(t, srv, path)
-	if resp.Status != http.StatusOK {
-		t.Fatalf("GET %s вернул %d, ожидали 200: %s", path, resp.Status, resp.Body)
-	}
-	if resp.ContentType != "application/json" {
-		t.Errorf("тип содержимого %q, ожидали application/json", resp.ContentType)
-	}
-
-	var page pageOfMenuItems
-	if err := json.Unmarshal(resp.Body, &page); err != nil {
-		t.Fatalf("разобрать страницу меню: %v", err)
-	}
+	var page contractPage
+	decode(t, b.get(t, contractMenu+query), http.StatusOK, &page)
 
 	return page
 }
 
-// refusal требует, чтобы коробка отказала в формате problem+json, и возвращает отказ.
-func refusal(t *testing.T, srv *httptest.Server, path string, status int) problemDocument {
+// itemGivenToPlatform находит позицию в партнёрской выдаче по внешнему идентификатору.
+func (b *box) itemGivenToPlatform(t *testing.T, externalID string) contractItem {
 	t.Helper()
 
-	resp := get(t, srv, path)
-	if resp.Status != status {
-		t.Fatalf("GET %s вернул %d, ожидали %d: %s", path, resp.Status, status, resp.Body)
-	}
-	if resp.ContentType != "application/problem+json" {
-		t.Errorf("тип содержимого %q, ожидали application/problem+json", resp.ContentType)
+	for _, item := range b.menuGivenToPlatform(t, "").Items {
+		if item.ExternalID == externalID {
+			return item
+		}
 	}
 
-	var document problemDocument
-	if err := json.Unmarshal(resp.Body, &document); err != nil {
-		t.Fatalf("разобрать отказ: %v", err)
-	}
+	t.Fatalf("позиции %s нет в меню, отданном площадке", externalID)
 
-	return document
+	return contractItem{}
 }
 
 func TestMenuPageUsesWindowDeclaredInContractWhenPlatformDoesNotAskForOne(t *testing.T) {
-	page := menuPage(t, newRestaurantBox(t), "/api/v1/menu")
+	t.Parallel()
+
+	page := newBox(t).menuGivenToPlatform(t, "")
 
 	if page.Page.Limit != 100 || page.Page.Offset != 0 {
 		t.Errorf("страница limit=%d offset=%d, ожидали умолчания контракта 100 и 0",
@@ -76,7 +60,9 @@ func TestMenuPageUsesWindowDeclaredInContractWhenPlatformDoesNotAskForOne(t *tes
 }
 
 func TestMenuPageEchoesTheWindowThePlatformAskedFor(t *testing.T) {
-	page := menuPage(t, newRestaurantBox(t), "/api/v1/menu?limit=500&offset=1000")
+	t.Parallel()
+
+	page := newBox(t).menuGivenToPlatform(t, "?limit=500&offset=1000")
 
 	if page.Page.Limit != 500 || page.Page.Offset != 1000 {
 		t.Errorf("страница limit=%d offset=%d, ожидали запрошенные 500 и 1000",
@@ -85,7 +71,9 @@ func TestMenuPageEchoesTheWindowThePlatformAskedFor(t *testing.T) {
 }
 
 func TestEmptyMenuIsAnEmptyPageAndNotAnAbsentCollection(t *testing.T) {
-	page := menuPage(t, newRestaurantBox(t), "/api/v1/menu")
+	t.Parallel()
+
+	page := newBox(t).menuGivenToPlatform(t, "")
 
 	if page.Items == nil {
 		t.Error("items пришли как null, ожидали пустой массив: контракт обещает коллекцию всегда")
@@ -97,12 +85,223 @@ func TestEmptyMenuIsAnEmptyPageAndNotAnAbsentCollection(t *testing.T) {
 }
 
 func TestMenuRefusesPageLargerThanContractAllows(t *testing.T) {
-	document := refusal(t, newRestaurantBox(t), "/api/v1/menu?limit=501", http.StatusBadRequest)
+	t.Parallel()
+
+	document := asRefusal(t, newBox(t).get(t, contractMenu+"?limit=501"), http.StatusBadRequest)
 
 	if document.Code != "validation_failed" {
 		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)
 	}
 	if document.Status != http.StatusBadRequest {
 		t.Errorf("в теле отказа status=%d, ожидали 400", document.Status)
+	}
+}
+
+func TestItemKeptByOperatorIsWhatThePlatformSees(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{
+		Name:        "Круассан с миндалём",
+		Description: "Слоёное тесто, миндальный крем",
+		Price:       45000,
+		Stock:       10,
+	})
+
+	item := b.itemGivenToPlatform(t, added.ID)
+
+	if item.Name != "Круассан с миндалём" {
+		t.Errorf("название %q, ожидали заведённое оператором", item.Name)
+	}
+	if item.Description == nil || *item.Description != "Слоёное тесто, миндальный крем" {
+		t.Errorf("описание %v, ожидали заведённое оператором", item.Description)
+	}
+	if !item.IsAvailable {
+		t.Error("позиция без отметки стоп-листа и с остатком отдана недоступной")
+	}
+}
+
+func TestExternalIdentifierOfItemIsTheOneTheBoxIssuedWhenItWasAdded(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Эклер", Price: 30000, Stock: 3})
+
+	if added.ID == "" {
+		t.Fatal("коробка не выдала позиции идентификатор")
+	}
+	if item := b.itemGivenToPlatform(t, added.ID); item.ExternalID != added.ID {
+		t.Errorf("внешний идентификатор %q, ожидали выданный коробкой %q", item.ExternalID, added.ID)
+	}
+}
+
+func TestExternalIdentifierOfItemSurvivesEditingOfItsCard(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Эклер", Price: 30000, Stock: 3})
+
+	var edited operatorItem
+	decode(t, b.send(t, http.MethodPut, operatorMenu+"/"+added.ID,
+		map[string]any{"name": "Эклер шоколадный", "price": 35000}), http.StatusOK, &edited)
+
+	item := b.itemGivenToPlatform(t, added.ID)
+
+	if item.ExternalID != added.ID {
+		t.Errorf("после правки внешний идентификатор %q, ожидали прежний %q: площадка "+
+			"обновляет каталог по нему, и смена завела бы на витрине вторую позицию",
+			item.ExternalID, added.ID)
+	}
+	if item.Name != "Эклер шоколадный" || item.Price != 35000 {
+		t.Errorf("площадка видит %q за %d, ожидали исправленные оператором", item.Name, item.Price)
+	}
+}
+
+func TestPriceReachesThePlatformInTheSameMinorUnitsItWasKeptIn(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	// Цена, которую дробное число денег испортило бы: 1234,57 рубля.
+	added := b.addItem(t, newItem{Name: "Торт на заказ", Price: 123457, Stock: 1})
+
+	if item := b.itemGivenToPlatform(t, added.ID); item.Price != 123457 {
+		t.Errorf("цена уехала площадке как %d, ожидали 123457 копеек ровно", item.Price)
+	}
+}
+
+func TestItemMarkedByOperatorAsMissingIsGivenToThePlatformAsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Борщ", Price: 40000, Stock: 5})
+
+	b.markStopList(t, added.ID, true)
+
+	item := b.itemGivenToPlatform(t, added.ID)
+
+	if item.IsAvailable {
+		t.Error("позиция в стоп-листе отдана площадке доступной")
+	}
+	if item.Name != "Борщ" {
+		t.Errorf("позиции в стоп-листе не нашлось в меню (%q): она остаётся в выдаче, "+
+			"иначе покупатель искал бы блюдо, которое вчера видел", item.Name)
+	}
+}
+
+func TestItemWithoutStockIsGivenToThePlatformAsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Пирожок", Price: 5000, Stock: 2})
+
+	b.setStock(t, added.ID, 0)
+
+	if item := b.itemGivenToPlatform(t, added.ID); item.IsAvailable {
+		t.Error("позиция с нулевым остатком отдана площадке доступной")
+	}
+}
+
+func TestItemReturnsToAvailabilityWhenOperatorTakesOffTheStopListMark(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Борщ", Price: 40000, Stock: 5})
+	b.markStopList(t, added.ID, true)
+
+	b.markStopList(t, added.ID, false)
+
+	if item := b.itemGivenToPlatform(t, added.ID); !item.IsAvailable {
+		t.Error("позиция после снятия отметки осталась недоступной, хотя остаток есть")
+	}
+}
+
+func TestItemReturnsToAvailabilityWhenOperatorReplenishesStock(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Пирожок", Price: 5000, Stock: 0})
+
+	b.setStock(t, added.ID, 7)
+
+	if item := b.itemGivenToPlatform(t, added.ID); !item.IsAvailable {
+		t.Error("позиция с пополненным остатком осталась недоступной")
+	}
+}
+
+func TestReplenishedStockDoesNotTakeItemOutOfTheStopList(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Устрицы", Price: 90000, Stock: 0})
+	b.markStopList(t, added.ID, true)
+
+	b.setStock(t, added.ID, 12)
+
+	if item := b.itemGivenToPlatform(t, added.ID); item.IsAvailable {
+		t.Error("позиция с остатком стала доступной, хотя оператор держит её в стоп-листе: " +
+			"снять позицию со стопа может только он")
+	}
+}
+
+func TestItemRemovedByOperatorDisappearsFromTheMenuGivenToThePlatform(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Сезонный суп", Price: 30000, Stock: 4})
+
+	if resp := b.send(t, http.MethodDelete, operatorMenu+"/"+added.ID, nil); resp.Status != http.StatusNoContent {
+		t.Fatalf("удаление позиции вернуло %d, ожидали 204: %s", resp.Status, resp.Body)
+	}
+
+	page := b.menuGivenToPlatform(t, "")
+
+	if len(page.Items) != 0 || page.Page.Total != 0 {
+		t.Errorf("после удаления площадке отдано %d позиций при total=%d, ожидали пустое меню",
+			len(page.Items), page.Page.Total)
+	}
+}
+
+func TestMenuIsGivenToThePlatformPageByPageWithTotalOfTheWholeMenu(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	for _, name := range []string{"Борщ", "Ватрушка", "Голубцы"} {
+		b.addItem(t, newItem{Name: name, Price: 10000, Stock: 1})
+	}
+
+	first := b.menuGivenToPlatform(t, "?limit=2")
+	last := b.menuGivenToPlatform(t, "?limit=2&offset=2")
+
+	if len(first.Items) != 2 || len(last.Items) != 1 {
+		t.Errorf("страницы вышли по %d и %d позиций, ожидали 2 и 1", len(first.Items), len(last.Items))
+	}
+	if first.Page.Total != 3 || last.Page.Total != 3 {
+		t.Errorf("total страниц %d и %d, ожидали 3 на обеих: это размер меню, а не окна",
+			first.Page.Total, last.Page.Total)
+	}
+}
+
+func TestEveryItemReachesThePlatformExactlyOnceWhenMenuIsWalkedPageByPage(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	// Одинаковые названия — тот случай, ради которого порядок выдачи включает второй
+	// ключ: без него одноимённые позиции переставлялись бы между запросами, и площадка
+	// то читала бы одну дважды, то теряла её из каталога.
+	for range 3 {
+		b.addItem(t, newItem{Name: "Комплимент от шефа", Price: 0, Stock: 1})
+	}
+
+	seen := map[string]int{}
+	for offset := range 3 {
+		page := b.menuGivenToPlatform(t, "?limit=1&offset="+strconv.Itoa(offset))
+		if len(page.Items) != 1 {
+			t.Fatalf("страница со смещением %d вернула %d позиций, ожидали одну", offset, len(page.Items))
+		}
+		seen[page.Items[0].ExternalID]++
+	}
+
+	if len(seen) != 3 {
+		t.Errorf("обход меню страницами дал %d различных позиций из 3: %v", len(seen), seen)
 	}
 }

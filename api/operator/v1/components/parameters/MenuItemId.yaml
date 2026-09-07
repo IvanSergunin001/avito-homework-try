@@ -1,0 +1,9 @@
+name: itemId
+in: path
+required: true
+description: |
+  Идентификатор позиции в коробке. Он же уезжает площадке как `external_id`
+  партнёрского контракта.
+schema:
+  type: string
+  format: uuid

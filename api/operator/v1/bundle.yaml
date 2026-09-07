@@ -1,0 +1,448 @@
+openapi: 3.0.3
+info:
+  title: Авито.Кухня — рабочее место оператора коробки заведения
+  version: 1.0.0
+  description: |
+    Коробку берёт заведение, у которого своих систем нет, поэтому меню в ней кто-то
+    должен вести — этим занимается оператор заведения.
+
+    Оператор заводит, правит и удаляет позиции, отмечает позицию в стоп-листе и ведёт
+    остаток. Наружу, площадке, коробка отдаёт то же меню по партнёрскому контракту
+    (`api/partner/v1`), но короче: остаток и отметка стоп-листа — внутренняя кухня
+    заведения, площадке достаточно ответа «заказать можно или нельзя».
+
+    Позиция считается доступной, когда она не в стоп-листе и её остаток больше нуля.
+    Признак `is_available` в ответах — тот же, что уезжает площадке: оператор видит
+    последствие своей правки, не заглядывая в партнёрскую выдачу.
+
+    Ошибки — `application/problem+json` (RFC 7807, актуализирован RFC 9457) с
+    дополнительным полем `code`: машиночитаемая причина отказа.
+
+    Операции не закрыты токеном: аутентификация исключена заданием, а рабочее место
+    живёт во внутреннем контуре заведения и наружу не публикуется. В эксплуатации сюда
+    встаёт вход оператора — см. раздел упрощений в README.
+
+    Общие с остальными спецификациями схемы (ошибка, пагинация, деньги) намеренно
+    продублированы: поверхности живут разными циклами выпуска.
+servers:
+  - url: '{restaurantBaseUrl}/api/operator/v1'
+    description: |
+      Коробка заведения. Партнёрский контракт коробка отдаёт по адресу `/api/v1`,
+      рабочее место оператора — здесь: у поверхностей разные потребители и разные циклы.
+    variables:
+      restaurantBaseUrl:
+        default: http://localhost:8081
+security: []
+tags:
+  - name: menu
+    description: Меню, стоп-лист и остатки
+paths:
+  /menu:
+    get:
+      operationId: listMenuItems
+      summary: Меню заведения глазами оператора
+      description: |
+        Постраничный список позиций. В отличие от партнёрской выдачи, здесь видны остаток и
+        отметка стоп-листа: оператору нужно понимать, почему позиция недоступна, а площадке —
+        только то, можно ли её заказать.
+      tags:
+        - menu
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Страница меню.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItemPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: addMenuItem
+      summary: Завести позицию меню
+      description: |
+        Идентификатор позиции выдаёт коробка: он же уезжает площадке как `external_id`
+        партнёрского контракта и остаётся неизменным до удаления позиции — площадка обновляет
+        каталог по паре «заведение + `external_id`».
+      tags:
+        - menu
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewMenuItem'
+      responses:
+        '201':
+          description: Позиция заведена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /menu/{itemId}:
+    put:
+      operationId: updateMenuItem
+      summary: Изменить позицию меню
+      description: |
+        Полная замена карточки позиции: название, описание и цена. Остаток и стоп-лист сюда
+        не входят — это отдельные операции: карточку правят редко и обдуманно, а стоп-лист и
+        остаток меняются в течение дня, и смешивать их значило бы переписывать цену при
+        каждой отметке «закончилось».
+      tags:
+        - menu
+      parameters:
+        - $ref: '#/components/parameters/MenuItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemUpdate'
+      responses:
+        '200':
+          description: Позиция изменена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: removeMenuItem
+      summary: Удалить позицию меню
+      description: |
+        Позиция исчезает из выдачи по партнёрскому контракту, и площадка деактивирует её на
+        витрине при ближайшей синхронизации каталога. Позицию, которая просто закончилась,
+        удалять не нужно — для этого есть стоп-лист.
+      tags:
+        - menu
+      parameters:
+        - $ref: '#/components/parameters/MenuItemId'
+      responses:
+        '204':
+          description: Позиции больше нет.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /menu/{itemId}/stop-list:
+    put:
+      operationId: setStopListMark
+      summary: Отметить позицию в стоп-листе или снять отметку
+      description: |
+        Отметка и её снятие — одна операция с булевым значением, а не две ручки: состояние у
+        позиции одно, и повторный вызов с тем же значением ничего не меняет.
+
+        Позиция в стоп-листе остаётся в меню, но уезжает площадке недоступной: убрать её из
+        выдачи вместо этого нельзя — покупатель искал бы блюдо, которое вчера видел, и не
+        находил его без объяснения.
+      tags:
+        - menu
+      parameters:
+        - $ref: '#/components/parameters/MenuItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopListMark'
+      responses:
+        '200':
+          description: Отметка выставлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /menu/{itemId}/stock:
+    put:
+      operationId: setStock
+      summary: Задать остаток позиции
+      description: |
+        Остаток задаётся целиком, а не приращением: оператор пересчитал и сообщил, сколько
+        осталось, — повтор запроса по таймауту не должен списать порцию дважды.
+
+        Позиция с нулевым остатком уезжает площадке недоступной, даже если она не в
+        стоп-листе: заказывать нечего.
+      tags:
+        - menu
+      parameters:
+        - $ref: '#/components/parameters/MenuItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockUpdate'
+      responses:
+        '200':
+          description: Остаток записан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Размер страницы. По умолчанию 20, больше 100 за раз коробка не отдаёт.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Сколько позиций пропустить от начала выдачи.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    MenuItemId:
+      name: itemId
+      in: path
+      required: true
+      description: |
+        Идентификатор позиции в коробке. Он же уезжает площадке как `external_id`
+        партнёрского контракта.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Money:
+      type: integer
+      format: int64
+      minimum: 0
+      description: |
+        Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
+        денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+      example: 45000
+    Stock:
+      type: integer
+      minimum: 0
+      description: |
+        Остаток позиции в штуках. Ноль — заказать нечего: позиция уезжает площадке недоступной,
+        но из меню не пропадает.
+      example: 12
+    MenuItem:
+      type: object
+      description: |
+        Позиция меню глазами оператора: карточка, остаток, отметка стоп-листа и итог —
+        доступна ли позиция площадке.
+      required:
+        - id
+        - name
+        - price
+        - stock
+        - in_stop_list
+        - is_available
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор позиции; он же — `external_id` партнёрского контракта.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Круассан с миндалём
+        description:
+          type: string
+          maxLength: 2000
+          example: Слоёное тесто, миндальный крем
+        price:
+          $ref: '#/components/schemas/Money'
+        stock:
+          $ref: '#/components/schemas/Stock'
+        in_stop_list:
+          type: boolean
+          description: Оператор отметил, что позиции сейчас нет.
+          example: false
+        is_available:
+          type: boolean
+          description: |
+            Итог, который видит площадка: позиция не в стоп-листе и её остаток больше нуля.
+            Значение вычисляется коробкой и в запросах не принимается — им управляют отметка
+            стоп-листа и остаток.
+          example: true
+    PageMeta:
+      type: object
+      description: |
+        Страница выдачи: смещение и размер, которые запросил оператор, плюс общее число позиций
+        в меню.
+      required:
+        - limit
+        - offset
+        - total
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Сколько позиций запрошено на страницу.
+          example: 20
+        offset:
+          type: integer
+          minimum: 0
+          description: Сколько позиций пропущено от начала выдачи.
+          example: 0
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Сколько позиций всего в меню.
+          example: 42
+    MenuItemPage:
+      type: object
+      description: Страница меню.
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuItem'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+    ProblemCode:
+      type: string
+      description: |
+        Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
+        перечисление, а расширение списка — изменение версии поверхности.
+      enum:
+        - validation_failed
+        - menu_item_not_found
+      example: validation_failed
+    Problem:
+      type: object
+      description: |
+        Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
+        Поле `code` — расширение стандарта: машиночитаемая причина, по которой клиент выбирает
+        ветку поведения. Текст `detail` предназначен человеку и может меняться без версии API.
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+          description: Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+          example: about:blank
+        title:
+          type: string
+          description: Короткое человекочитаемое название проблемы.
+          example: Некорректный запрос
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Код ответа HTTP, продублированный в теле.
+          example: 400
+        detail:
+          type: string
+          description: Пояснение для человека, привязанное к конкретному случаю.
+          example: 'название: от 1 до 200 знаков'
+        instance:
+          type: string
+          format: uri-reference
+          description: Ссылка на конкретное вхождение проблемы.
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+    NewMenuItem:
+      type: object
+      description: |
+        Новая позиция меню. Остаток указывается сразу: позиция без остатка недоступна, и
+        умолчание здесь решало бы за оператора, продаётся его блюдо или нет.
+      required:
+        - name
+        - price
+        - stock
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Круассан с миндалём
+        description:
+          type: string
+          maxLength: 2000
+          example: Слоёное тесто, миндальный крем
+        price:
+          $ref: '#/components/schemas/Money'
+        stock:
+          $ref: '#/components/schemas/Stock'
+    MenuItemUpdate:
+      type: object
+      description: |
+        Полная замена карточки позиции. Описание можно не присылать — тогда его не станет:
+        это правка карточки целиком, а не частичная.
+      required:
+        - name
+        - price
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Круассан с миндалём
+        description:
+          type: string
+          maxLength: 2000
+          example: Слоёное тесто, миндальный крем
+        price:
+          $ref: '#/components/schemas/Money'
+    StopListMark:
+      type: object
+      description: |
+        Отметка стоп-листа. Истина — позиции сейчас нет, ложь — снова есть.
+      required:
+        - in_stop_list
+      properties:
+        in_stop_list:
+          type: boolean
+          example: true
+    StockUpdate:
+      type: object
+      description: Новый остаток позиции — целиком, а не приращением.
+      required:
+        - stock
+      properties:
+        stock:
+          $ref: '#/components/schemas/Stock'
+  responses:
+    BadRequest:
+      description: |
+        Запрос не проходит проверку: `code` = `validation_failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: |
+        Позиции с таким идентификатором в меню нет: `code` = `menu_item_not_found`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'

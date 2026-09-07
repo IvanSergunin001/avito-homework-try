@@ -1,0 +1,6 @@
+description: |
+  Позиции с таким идентификатором в меню нет: `code` = `menu_item_not_found`.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'

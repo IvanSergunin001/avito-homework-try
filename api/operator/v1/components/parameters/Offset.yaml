@@ -1,0 +1,8 @@
+name: offset
+in: query
+required: false
+description: Сколько позиций пропустить от начала выдачи.
+schema:
+  type: integer
+  minimum: 0
+  default: 0

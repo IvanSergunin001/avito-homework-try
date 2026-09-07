@@ -1,0 +1,8 @@
+type: string
+description: |
+  Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
+  перечисление, а расширение списка — изменение версии поверхности.
+enum:
+  - validation_failed
+  - menu_item_not_found
+example: validation_failed

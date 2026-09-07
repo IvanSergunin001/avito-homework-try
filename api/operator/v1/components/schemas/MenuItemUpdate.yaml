@@ -1,0 +1,19 @@
+type: object
+description: |
+  Полная замена карточки позиции. Описание можно не присылать — тогда его не станет:
+  это правка карточки целиком, а не частичная.
+required:
+  - name
+  - price
+properties:
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+    example: Круассан с миндалём
+  description:
+    type: string
+    maxLength: 2000
+    example: Слоёное тесто, миндальный крем
+  price:
+    $ref: 'Money.yaml'

@@ -1,0 +1,7 @@
+# Рабочее место оператора коробки заведения: серверный интерфейс и модели. Поверхность
+# принадлежит коробке и стоит сверх партнёрского контракта — площадка о ней не знает.
+package: operator_v1
+output: internal/restaurant/adapters/http/operator_v1/server.gen.go
+generate:
+  chi-server: true
+  models: true

@@ -34,9 +34,11 @@ RUN redocly lint \
         api/customer/v1/openapi.yaml \
         api/partner/v1/openapi.yaml \
         api/admin/v1/openapi.yaml \
+        api/operator/v1/openapi.yaml \
  && redocly bundle api/customer/v1/openapi.yaml -o /out/api/customer/v1/bundle.yaml \
  && redocly bundle api/partner/v1/openapi.yaml  -o /out/api/partner/v1/bundle.yaml \
- && redocly bundle api/admin/v1/openapi.yaml    -o /out/api/admin/v1/bundle.yaml
+ && redocly bundle api/admin/v1/openapi.yaml    -o /out/api/admin/v1/bundle.yaml \
+ && redocly bundle api/operator/v1/openapi.yaml -o /out/api/operator/v1/bundle.yaml
 
 # --- генерация кода по спецификациям -----------------------------------------
 # Генерируем от собранных документов, а не от дерева ссылок: результат не зависит от
@@ -50,7 +52,8 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
  && go tool oapi-codegen -config api/codegen/platform_partner.yaml          api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/codegen/platform_admin.yaml            api/admin/v1/bundle.yaml \
  && go tool oapi-codegen -config api/codegen/platform_restaurant_client.yaml api/partner/v1/bundle.yaml \
- && go tool oapi-codegen -config api/codegen/restaurant_partner.yaml        api/partner/v1/bundle.yaml
+ && go tool oapi-codegen -config api/codegen/restaurant_partner.yaml        api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/codegen/restaurant_operator.yaml       api/operator/v1/bundle.yaml
 
 # --- артефакты генерации ------------------------------------------------------
 # Пустой образ с одними результатами: `make api` выгружает его прямо в рабочее дерево
