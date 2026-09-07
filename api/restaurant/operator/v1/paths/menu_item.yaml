@@ -1,0 +1,47 @@
+put:
+  operationId: updateMenuItem
+  summary: Изменить позицию меню
+  description: |
+    Полная замена карточки позиции: название, описание и цена. Остаток и стоп-лист сюда
+    не входят — это отдельные операции: карточку правят редко и обдуманно, а стоп-лист и
+    остаток меняются в течение дня, и смешивать их значило бы переписывать цену при
+    каждой отметке «закончилось».
+  tags:
+    - menu
+  parameters:
+    - $ref: '../components/parameters.yaml#/MenuItemId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/MenuItemUpdate'
+  responses:
+    '200':
+      description: Позиция изменена.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/MenuItem'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../../common/v1/components/responses.yaml#/NotFound'
+delete:
+  operationId: removeMenuItem
+  summary: Удалить позицию меню
+  description: |
+    Позиция исчезает из выдачи по партнёрскому контракту, и площадка деактивирует её на
+    витрине при ближайшей синхронизации каталога. Позицию, которая просто закончилась,
+    удалять не нужно — для этого есть стоп-лист.
+  tags:
+    - menu
+  parameters:
+    - $ref: '../components/parameters.yaml#/MenuItemId'
+  responses:
+    '204':
+      description: Позиции больше нет.
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../../common/v1/components/responses.yaml#/NotFound'

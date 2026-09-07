@@ -1,0 +1,45 @@
+get:
+  operationId: listMenuItems
+  summary: Меню заведения глазами оператора
+  description: |
+    Постраничный список позиций. В отличие от партнёрской выдачи, здесь видны остаток и
+    отметка стоп-листа: оператору нужно понимать, почему позиция недоступна, а площадке —
+    только то, можно ли её заказать.
+  tags:
+    - menu
+  parameters:
+    - $ref: '../components/parameters.yaml#/Limit'
+    - $ref: '../../../../common/v1/components/parameters.yaml#/Offset'
+  responses:
+    '200':
+      description: Страница меню.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/MenuItemPage'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+post:
+  operationId: addMenuItem
+  summary: Завести позицию меню
+  description: |
+    Идентификатор позиции выдаёт коробка: он же уезжает площадке как `external_id`
+    партнёрского контракта и остаётся неизменным до удаления позиции — площадка обновляет
+    каталог по паре «заведение + `external_id`».
+  tags:
+    - menu
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/NewMenuItem'
+  responses:
+    '201':
+      description: Позиция заведена.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/MenuItem'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'

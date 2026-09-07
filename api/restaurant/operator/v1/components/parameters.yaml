@@ -1,0 +1,24 @@
+# Параметры рабочего места оператора. Общий `offset` — в `api/common/v1`; потолок страницы
+# у каждого API свой, поэтому `limit` объявлен здесь.
+
+Limit:
+  name: limit
+  in: query
+  required: false
+  description: Размер страницы. По умолчанию 20, больше 100 за раз коробка не отдаёт.
+  schema:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 20
+
+MenuItemId:
+  name: itemId
+  in: path
+  required: true
+  description: |
+    Идентификатор позиции в коробке. Он же уезжает площадке как `external_id`
+    партнёрского контракта.
+  schema:
+    type: string
+    format: uuid

@@ -373,6 +373,7 @@ components:
         - restaurant_not_found
         - product_not_found
         - order_not_found
+        - menu_item_not_found
         - out_of_stock
         - price_changed
         - unknown_product

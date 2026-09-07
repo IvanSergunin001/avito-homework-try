@@ -1,0 +1,132 @@
+# Схемы рабочего места оператора. Общие с другими API — деньги, страница выдачи, основа
+# отказа — подключаются из `api/common/v1`.
+
+MenuItem:
+  type: object
+  description: |
+    Позиция меню глазами оператора: карточка, остаток, отметка стоп-листа и итог —
+    доступна ли позиция площадке.
+  required:
+    - id
+    - name
+    - price
+    - stock
+    - in_stop_list
+    - is_available
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Идентификатор позиции; он же — `external_id` партнёрского контракта.
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Круассан с миндалём
+    description:
+      type: string
+      maxLength: 2000
+      example: Слоёное тесто, миндальный крем
+    price:
+      $ref: '../../../../common/v1/components/schemas.yaml#/Money'
+    stock:
+      $ref: '#/Stock'
+    in_stop_list:
+      type: boolean
+      description: Оператор отметил, что позиции сейчас нет.
+      example: false
+    is_available:
+      type: boolean
+      description: |
+        Итог, который видит площадка: позиция не в стоп-листе и её остаток больше нуля.
+        Значение вычисляется коробкой и в запросах не принимается — им управляют отметка
+        стоп-листа и остаток.
+      example: true
+
+MenuItemPage:
+  type: object
+  description: Страница меню.
+  required:
+    - items
+    - page
+  properties:
+    items:
+      type: array
+      items:
+        $ref: '#/MenuItem'
+    page:
+      $ref: '../../../../common/v1/components/schemas.yaml#/PageMeta'
+
+MenuItemUpdate:
+  type: object
+  description: |
+    Полная замена карточки позиции. Описание можно не присылать — тогда его не станет:
+    это правка карточки целиком, а не частичная.
+  required:
+    - name
+    - price
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Круассан с миндалём
+    description:
+      type: string
+      maxLength: 2000
+      example: Слоёное тесто, миндальный крем
+    price:
+      $ref: '../../../../common/v1/components/schemas.yaml#/Money'
+
+NewMenuItem:
+  type: object
+  description: |
+    Новая позиция меню. Остаток указывается сразу: позиция без остатка недоступна, и
+    умолчание здесь решало бы за оператора, продаётся его блюдо или нет.
+  required:
+    - name
+    - price
+    - stock
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Круассан с миндалём
+    description:
+      type: string
+      maxLength: 2000
+      example: Слоёное тесто, миндальный крем
+    price:
+      $ref: '../../../../common/v1/components/schemas.yaml#/Money'
+    stock:
+      $ref: '#/Stock'
+
+Stock:
+  type: integer
+  minimum: 0
+  description: |
+    Остаток позиции в штуках. Ноль — заказать нечего: позиция уезжает площадке недоступной,
+    но из меню не пропадает.
+  example: 12
+
+StockUpdate:
+  type: object
+  description: Новый остаток позиции — целиком, а не приращением.
+  required:
+    - stock
+  properties:
+    stock:
+      $ref: '#/Stock'
+
+StopListMark:
+  type: object
+  description: |
+    Отметка стоп-листа. Истина — позиции сейчас нет, ложь — снова есть.
+  required:
+    - in_stop_list
+  properties:
+    in_stop_list:
+      type: boolean
+      example: true

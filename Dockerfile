@@ -36,9 +36,11 @@ RUN redocly lint \
         api/customer/v1/openapi.yaml \
         api/partner/v1/openapi.yaml \
         api/admin/v1/openapi.yaml \
+        api/restaurant/operator/v1/openapi.yaml \
  && redocly bundle api/customer/v1/openapi.yaml -o /out/api/customer/v1/bundle.yaml \
  && redocly bundle api/partner/v1/openapi.yaml  -o /out/api/partner/v1/bundle.yaml \
- && redocly bundle api/admin/v1/openapi.yaml    -o /out/api/admin/v1/bundle.yaml
+ && redocly bundle api/admin/v1/openapi.yaml    -o /out/api/admin/v1/bundle.yaml \
+ && redocly bundle api/restaurant/operator/v1/openapi.yaml -o /out/api/restaurant/operator/v1/bundle.yaml
 
 # --- генерация кода по спецификациям -----------------------------------------
 # Генерируем от собранных документов, а не от дерева ссылок: результат не зависит от
@@ -51,12 +53,13 @@ FROM deps AS codegen
 COPY api ./api
 COPY --from=bundle /out/api ./api
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go tool oapi-codegen -config api/customer/v1/codegen-server.yaml            api/customer/v1/bundle.yaml \
- && go tool oapi-codegen -config api/customer/v1/codegen-client.yaml            api/customer/v1/bundle.yaml \
- && go tool oapi-codegen -config api/partner/v1/codegen-server-platform.yaml    api/partner/v1/bundle.yaml \
- && go tool oapi-codegen -config api/partner/v1/codegen-server-restaurant.yaml  api/partner/v1/bundle.yaml \
- && go tool oapi-codegen -config api/partner/v1/codegen-client.yaml             api/partner/v1/bundle.yaml \
- && go tool oapi-codegen -config api/admin/v1/codegen-server.yaml               api/admin/v1/bundle.yaml \
+    go tool oapi-codegen -config api/customer/v1/codegen-server.yaml               api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/customer/v1/codegen-client.yaml               api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-server-platform.yaml       api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-server-restaurant.yaml     api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-client.yaml                api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/admin/v1/codegen-server.yaml                  api/admin/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/restaurant/operator/v1/codegen-server.yaml    api/restaurant/operator/v1/bundle.yaml \
  && cd api && go mod tidy
 
 # --- артефакты генерации ------------------------------------------------------
