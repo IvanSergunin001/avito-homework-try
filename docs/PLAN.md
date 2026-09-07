@@ -39,7 +39,7 @@ cmd/platform, cmd/restaurant
 internal/platform/{domain, application, adapters/{http, postgres, restaurant_client}, migrations}
 internal/restaurant/{domain, application, adapters/{http, postgres, platform_client}, migrations}
 internal/pkg/{config, problem, logger, testdb}
-api/{client,partner,admin}/v1/{openapi.yaml, components/*.yaml, bundle.yaml}
+api/{customer,partner,admin}/v1/{openapi.yaml, components/*.yaml, bundle.yaml}
 docs/{adr, puml, img}
 compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md  TASK.md
 ```
@@ -57,7 +57,7 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md  TASK
 
 Всё под `/api`, `/healthz` — в корне (пробы не версионируются).
 
-- Клиент `/api/v1`: `GET /restaurants`, `GET /restaurants/{id}`, `GET /restaurants/{id}/products`,
+- Покупатель (`api/customer/v1`) — `/api/v1`: `GET /restaurants`, `GET /restaurants/{id}`, `GET /restaurants/{id}/products`,
   `GET /products`, `GET /products/{id}`, `POST /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel`.
 - Партнёр `/api/partner/v1` (`Authorization: Bearer <partner-key>`): `POST /catalog/refresh`,
   `POST /orders/{id}/status` (callback статуса).
