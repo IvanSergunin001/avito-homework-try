@@ -11,7 +11,8 @@ help: ## Список команд
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-7s %s\n", $$1, $$2}'
 
 up: ## Поднять площадку, коробку заведения и PostgreSQL
-	docker compose up --build
+	docker compose up --build --detach --wait
+	@echo "Готово. Логи: make logs"
 
 down: ## Остановить всё и удалить данные базы
 	docker compose down --volumes
