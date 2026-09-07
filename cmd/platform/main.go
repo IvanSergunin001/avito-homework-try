@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
 	platformhttp "github.com/IvanSergunin001/Test157/internal/platform/adapters/http"
+	"github.com/IvanSergunin001/Test157/internal/platform/adapters/postgres"
 )
 
 // envPrefix — префикс переменных окружения площадки. Источник настроек один — окружение
@@ -37,5 +39,20 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return httpx.Serve(ctx, log, cfg, platformhttp.NewRouter(log))
+	// Схему накатывает отдельный шаг запуска, а служба только подключается к готовой базе.
+	db, err := postgres.Open(ctx, cfg.DatabaseDSN)
+	if err != nil {
+		return err
+	}
+	defer closeQuietly(ctx, log, db)
+
+	return httpx.Serve(ctx, log, cfg, platformhttp.NewRouter(log, db))
+}
+
+// closeQuietly закрывает подключение к базе: служба к этому моменту уже остановлена, и
+// ошибка закрытия ни на что не влияет — но узнать о ней из лога стоит.
+func closeQuietly(ctx context.Context, log *slog.Logger, db *sql.DB) {
+	if err := db.Close(); err != nil {
+		log.ErrorContext(ctx, "close database", slog.Any("error", err))
+	}
 }
