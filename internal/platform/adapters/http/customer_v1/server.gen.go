@@ -175,7 +175,7 @@ type Order struct {
 	CancelledBy *CancelledBy `json:"cancelled_by,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
 
-	// CustomerId Покупатель из заголовка `X-User-Id`.
+	// CustomerId Покупатель из заголовка `User-Id`.
 	//
 	// Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
 	CustomerId openapi_types.UUID `json:"customer_id"`
@@ -426,23 +426,32 @@ type UnprocessableEntity = Problem
 
 // PlaceOrderParams defines parameters for PlaceOrder.
 type PlaceOrderParams struct {
-	// XUserId Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
+	// UserId Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
 	// верит ему по условию задания и связывает с ним заказы, чтобы покупатель не видел чужие.
-	XUserId UserId `json:"X-User-Id"`
+	//
+	// Префикс `X-` не используется: RFC 6648 признал его устаревшим, а переименование заголовка
+	// после того, как на нём завязались клиенты, ломает всех сразу.
+	UserId UserId `json:"User-Id"`
 }
 
 // GetOrderParams defines parameters for GetOrder.
 type GetOrderParams struct {
-	// XUserId Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
+	// UserId Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
 	// верит ему по условию задания и связывает с ним заказы, чтобы покупатель не видел чужие.
-	XUserId UserId `json:"X-User-Id"`
+	//
+	// Префикс `X-` не используется: RFC 6648 признал его устаревшим, а переименование заголовка
+	// после того, как на нём завязались клиенты, ломает всех сразу.
+	UserId UserId `json:"User-Id"`
 }
 
 // CancelOrderParams defines parameters for CancelOrder.
 type CancelOrderParams struct {
-	// XUserId Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
+	// UserId Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
 	// верит ему по условию задания и связывает с ним заказы, чтобы покупатель не видел чужие.
-	XUserId UserId `json:"X-User-Id"`
+	//
+	// Префикс `X-` не используется: RFC 6648 признал его устаревшим, а переименование заголовка
+	// после того, как на нём завязались клиенты, ломает всех сразу.
+	UserId UserId `json:"User-Id"`
 }
 
 // SearchProductsParams defines parameters for SearchProducts.
@@ -583,26 +592,26 @@ func (siw *ServerInterfaceWrapper) PlaceOrder(w http.ResponseWriter, r *http.Req
 
 	headers := r.Header
 
-	// ------------- Required header parameter "X-User-Id" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("X-User-Id")]; found {
-		var XUserId UserId
+	// ------------- Required header parameter "User-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("User-Id")]; found {
+		var UserId UserId
 		n := len(valueList)
 		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-User-Id", Count: n})
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "User-Id", Count: n})
 			return
 		}
 
-		err = runtime.BindStyledParameterWithOptions("simple", "X-User-Id", valueList[0], &XUserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		err = runtime.BindStyledParameterWithOptions("simple", "User-Id", valueList[0], &UserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
 		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-User-Id", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "User-Id", Err: err})
 			return
 		}
 
-		params.XUserId = XUserId
+		params.UserId = UserId
 
 	} else {
-		err := fmt.Errorf("Header parameter X-User-Id is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-User-Id", Err: err})
+		err := fmt.Errorf("Header parameter User-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "User-Id", Err: err})
 		return
 	}
 
@@ -637,26 +646,26 @@ func (siw *ServerInterfaceWrapper) GetOrder(w http.ResponseWriter, r *http.Reque
 
 	headers := r.Header
 
-	// ------------- Required header parameter "X-User-Id" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("X-User-Id")]; found {
-		var XUserId UserId
+	// ------------- Required header parameter "User-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("User-Id")]; found {
+		var UserId UserId
 		n := len(valueList)
 		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-User-Id", Count: n})
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "User-Id", Count: n})
 			return
 		}
 
-		err = runtime.BindStyledParameterWithOptions("simple", "X-User-Id", valueList[0], &XUserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		err = runtime.BindStyledParameterWithOptions("simple", "User-Id", valueList[0], &UserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
 		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-User-Id", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "User-Id", Err: err})
 			return
 		}
 
-		params.XUserId = XUserId
+		params.UserId = UserId
 
 	} else {
-		err := fmt.Errorf("Header parameter X-User-Id is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-User-Id", Err: err})
+		err := fmt.Errorf("Header parameter User-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "User-Id", Err: err})
 		return
 	}
 
@@ -691,26 +700,26 @@ func (siw *ServerInterfaceWrapper) CancelOrder(w http.ResponseWriter, r *http.Re
 
 	headers := r.Header
 
-	// ------------- Required header parameter "X-User-Id" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("X-User-Id")]; found {
-		var XUserId UserId
+	// ------------- Required header parameter "User-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("User-Id")]; found {
+		var UserId UserId
 		n := len(valueList)
 		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-User-Id", Count: n})
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "User-Id", Count: n})
 			return
 		}
 
-		err = runtime.BindStyledParameterWithOptions("simple", "X-User-Id", valueList[0], &XUserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		err = runtime.BindStyledParameterWithOptions("simple", "User-Id", valueList[0], &UserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
 		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-User-Id", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "User-Id", Err: err})
 			return
 		}
 
-		params.XUserId = XUserId
+		params.UserId = UserId
 
 	} else {
-		err := fmt.Errorf("Header parameter X-User-Id is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-User-Id", Err: err})
+		err := fmt.Errorf("Header parameter User-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "User-Id", Err: err})
 		return
 	}
 

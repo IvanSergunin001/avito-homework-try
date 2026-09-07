@@ -21,7 +21,7 @@ properties:
   customer_id:
     type: string
     format: uuid
-    description: Покупатель из заголовка `X-User-Id`.
+    description: Покупатель из заголовка `User-Id`.
     example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
   restaurant_id:
     type: string
