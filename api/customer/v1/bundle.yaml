@@ -1,0 +1,680 @@
+openapi: 3.0.3
+info:
+  title: Авито.Кухня — клиентская поверхность
+  version: 1.0.0
+  description: |
+    Каталог заведений, меню, поиск товаров и заказы покупателя.
+
+    Аутентификации нет: покупатель называет себя заголовком `X-User-Id`. Это не
+    удостоверение, а самопровозглашённый идентификатор, которому площадка верит по условию
+    задания; заказы связываются с ним, чтобы покупатель не видел чужие.
+
+    Ошибки — `application/problem+json` (RFC 7807, актуализирован RFC 9457) с
+    дополнительным полем `code`: машиночитаемая причина отказа, по которой клиент выбирает
+    ветку поведения, не разбирая человеческий текст.
+
+    Поверхность живёт своим циклом: общие с партнёрской и админской спецификациями схемы
+    (ошибка, пагинация) намеренно продублированы, а не вынесены в общий файл.
+servers:
+  - url: https://kitchen.avito.ru/api/v1
+    description: Площадка
+security: []
+tags:
+  - name: catalog
+    description: Каталог заведений и товаров
+  - name: orders
+    description: Оформление заказа, его статус и отмена
+paths:
+  /restaurants:
+    get:
+      operationId: listRestaurants
+      summary: Список работающих заведений
+      description: |
+        Витрина покупателя: только активные заведения. Меню сюда не попадает — это коллекция
+        неограниченного размера со своей пагинацией, за ней отдельная ручка.
+      tags:
+        - catalog
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Страница списка заведений.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /restaurants/{restaurantId}:
+    get:
+      operationId: getRestaurant
+      summary: Карточка заведения
+      tags:
+        - catalog
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      responses:
+        '200':
+          description: Заведение.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Restaurant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /restaurants/{restaurantId}/products:
+    get:
+      operationId: listRestaurantProducts
+      summary: Меню заведения
+      description: |
+        Постраничное меню одного заведения. Параметр `q` сужает выдачу до товаров, чьё
+        название содержит подстроку, — так поиск можно ограничить одним заведением.
+      tags:
+        - catalog
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Страница меню.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /products:
+    get:
+      operationId: searchProducts
+      summary: Поиск товара по всем заведениям
+      description: |
+        Ищем блюдо, а не заведение: выдача идёт по всем активным заведениям сразу.
+      tags:
+        - catalog
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Страница выдачи товаров.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /products/{productId}:
+    get:
+      operationId: getProduct
+      summary: Карточка товара
+      tags:
+        - catalog
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Товар.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /orders:
+    post:
+      operationId: placeOrder
+      summary: Оформить заказ
+      description: |
+        Площадка сохраняет заказ, синхронно спрашивает заведение и возвращает результат.
+        Заведение — источник истины по наличию и цене, поэтому отказы приходят с его слов:
+        `out_of_stock`, `price_changed`, `unknown_product`, `restaurant_closed`.
+
+        Идемпотентность — по `order_id`: повторная отправка того же заказа возвращает `200`
+        с уже созданным заказом, а не создаёт второй.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewOrder'
+      responses:
+        '200':
+          description: Заказ с таким `order_id` и тем же составом уже был создан — отдаём его.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '201':
+          description: Заказ создан и принят заведением на рассмотрение.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      summary: Статус и состав заказа
+      description: |
+        Состав и сумма отдаются такими, какими были в момент оформления: обновление каталога
+        историю покупателя не переписывает. Чужой заказ неотличим от несуществующего — `404`.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Заказ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /orders/{orderId}/cancel:
+    post:
+      operationId: cancelOrder
+      summary: Отменить заказ
+      description: |
+        Покупатель отменяет заказ, пока его не начали готовить: из `pending`, `under_review`
+        и `confirmed`. С `cooking` и дальше — `409` с кодом `order_not_cancellable`: продукты
+        уже потрачены, такие случаи разбирает саппорт.
+
+        Повторная отмена уже отменённого заказа возвращает `200`: ретрай не должен ломаться.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Заказ отменён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+components:
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Размер страницы. По умолчанию 20, больше 100 за раз не отдаём.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Сколько записей пропустить от начала выдачи.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    RestaurantId:
+      name: restaurantId
+      in: path
+      required: true
+      description: Идентификатор заведения.
+      schema:
+        type: string
+        format: uuid
+    SearchQuery:
+      name: q
+      in: query
+      required: false
+      description: |
+        Подстрока названия товара. Поиск нечувствителен к регистру; пустая строка равнозначна
+        отсутствию параметра.
+      schema:
+        type: string
+        maxLength: 200
+      example: круассан
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      description: Идентификатор товара.
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      name: X-User-Id
+      in: header
+      required: true
+      description: |
+        Идентификатор покупателя. Не удостоверение, а самопровозглашённое значение: площадка
+        верит ему по условию задания и связывает с ним заказы, чтобы покупатель не видел чужие.
+      schema:
+        type: string
+        format: uuid
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Идентификатор заказа.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Restaurant:
+      type: object
+      description: Заведение в витрине покупателя. Закрытые заведения в выдачу не попадают.
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Пекарня «Батон»
+    PageMeta:
+      type: object
+      description: |
+        Страница выдачи: смещение и размер, которые запросил клиент, плюс общее число записей.
+        Пагинация — по смещению: для каталога демонстрационного масштаба этого достаточно,
+        курсорная пагинация отложена (см. README).
+      required:
+        - limit
+        - offset
+        - total
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Сколько записей запрошено на страницу.
+          example: 20
+        offset:
+          type: integer
+          minimum: 0
+          description: Сколько записей пропущено от начала выдачи.
+          example: 0
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Сколько записей всего удовлетворяет запросу.
+          example: 42
+    RestaurantPage:
+      type: object
+      description: Страница списка заведений.
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Restaurant'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+    ProblemCode:
+      type: string
+      description: |
+        Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
+        перечисление, а расширение списка — изменение версии поверхности.
+      enum:
+        - validation_failed
+        - restaurant_not_found
+        - product_not_found
+        - order_not_found
+        - out_of_stock
+        - price_changed
+        - unknown_product
+        - restaurant_closed
+        - order_not_cancellable
+        - idempotency_key_reuse
+        - restaurant_unavailable
+      example: validation_failed
+    Money:
+      type: integer
+      format: int64
+      minimum: 0
+      description: |
+        Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
+        денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+      example: 45000
+    Problem:
+      type: object
+      description: |
+        Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
+        Поле `code` — расширение стандарта: машиночитаемая причина, по которой клиент выбирает
+        ветку поведения. Текст `detail` предназначен человеку и может меняться без версии API.
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+          description: Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+          example: about:blank
+        title:
+          type: string
+          description: Короткое человекочитаемое название проблемы.
+          example: Некорректный запрос
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Код ответа HTTP, продублированный в теле.
+          example: 400
+        detail:
+          type: string
+          description: Пояснение для человека, привязанное к конкретному случаю.
+          example: 'limit: допустимы значения от 1 до 100'
+        instance:
+          type: string
+          format: uri-reference
+          description: Ссылка на конкретное вхождение проблемы.
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+        product_id:
+          type: string
+          format: uuid
+          description: |
+            Товар, из-за которого отказан заказ. Приходит с кодами `out_of_stock`,
+            `price_changed` и `unknown_product` — клиенту нужно знать, какую позицию править.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+        current_price:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: |
+            Актуальная цена товара по данным заведения. Приходит с кодом `price_changed`,
+            чтобы клиент показал новую цену, а не отправлял покупателя пересобирать корзину.
+    Product:
+      type: object
+      description: |
+        Позиция меню в витрине площадки. `is_available` — стоп-лист заведения: товар виден,
+        но заказать его нельзя, иначе покупатель искал бы исчезнувшее блюдо.
+      required:
+        - id
+        - restaurant_id
+        - name
+        - price
+        - is_available
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+        restaurant_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Круассан с миндалём
+        description:
+          type: string
+          maxLength: 2000
+          example: Слоёное тесто, миндальный крем
+        price:
+          $ref: '#/components/schemas/Money'
+        is_available:
+          type: boolean
+          description: Ложь — товар в стоп-листе заведения.
+          example: true
+    ProductPage:
+      type: object
+      description: Страница выдачи товаров — меню заведения или результат поиска.
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+    Quantity:
+      type: integer
+      minimum: 1
+      maximum: 100
+      description: Количество единиц товара в позиции заказа.
+      example: 2
+    NewOrderItem:
+      type: object
+      description: Позиция оформляемого заказа. Цену клиент не присылает — её знает площадка.
+      required:
+        - product_id
+        - quantity
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+    NewOrder:
+      type: object
+      description: |
+        Оформление заказа. `order_id` генерирует клиент (uuid v7 — монотонный, чтобы клиентский
+        первичный ключ не разносил вставки по индексу) и он же служит ключом идемпотентности:
+        повторная отправка того же заказа возвращает существующий заказ, а тот же идентификатор
+        с другим составом отклоняется как переиспользование ключа.
+      required:
+        - order_id
+        - restaurant_id
+        - address
+        - items
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        restaurant_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        address:
+          type: string
+          minLength: 1
+          maxLength: 500
+          example: Москва, Лесная 7, кв. 12
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/NewOrderItem'
+    OrderStatus:
+      type: string
+      description: |
+        Статус заказа. Нетерминальные: `pending`, `under_review`, `confirmed`, `cooking`,
+        `delivering`; терминальные: `completed`, `cancelled` — переходов из них нет.
+
+        `pending` ставит площадка при создании заказа, `under_review` — успешный синхронный
+        ответ заведения, дальнейшие переходы приходят уведомлениями от заведения.
+      enum:
+        - pending
+        - under_review
+        - confirmed
+        - cooking
+        - delivering
+        - completed
+        - cancelled
+      example: under_review
+    OrderItem:
+      type: object
+      description: |
+        Позиция заказа. Название и цена — снимок на момент оформления: обновление каталога
+        не должно переписывать историю покупателя задним числом.
+      required:
+        - product_id
+        - name
+        - price
+        - quantity
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+        name:
+          type: string
+          example: Круассан с миндалём
+        price:
+          $ref: '#/components/schemas/Money'
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+    CancelledBy:
+      type: string
+      description: |
+        Кто отменил заказ. Заведение после начала готовки отменяет заказ не партнёрской ручкой,
+        а через саппорт, поэтому `support` — самостоятельное значение, а не разновидность
+        `restaurant`.
+      enum:
+        - customer
+        - restaurant
+        - support
+      example: customer
+    Order:
+      type: object
+      description: |
+        Заказ покупателя. Сумма считается площадкой по ценам заведения — клиентскому расчёту
+        площадка не верит.
+      required:
+        - id
+        - customer_id
+        - restaurant_id
+        - status
+        - address
+        - items
+        - total
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор заказа, сгенерированный клиентом (uuid v7).
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        customer_id:
+          type: string
+          format: uuid
+          description: Покупатель из заголовка `X-User-Id`.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+        restaurant_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        address:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Адрес доставки в свободной форме.
+          example: Москва, Лесная 7, кв. 12
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total:
+          $ref: '#/components/schemas/Money'
+        cancelled_by:
+          $ref: '#/components/schemas/CancelledBy'
+        cancellation_reason:
+          type: string
+          maxLength: 500
+          description: Причина отмены. Заполняется, когда заказ отменён заведением через саппорт.
+          example: Закончились продукты
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+  responses:
+    BadRequest:
+      description: |
+        Запрос не проходит проверку: `code` = `validation_failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: |
+        Сущности нет или она недоступна покупателю.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: |
+        Отказ по правилам предметной области: закончился товар, изменилась цена, заказ уже нельзя отменить.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UnprocessableEntity:
+      description: |
+        Идентификатор заказа уже использован для другого состава: `code` = `idempotency_key_reuse`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    BadGateway:
+      description: |
+        Заведение ответило неверно или недоступно: `code` = `restaurant_unavailable`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GatewayTimeout:
+      description: |
+        Заведение не ответило вовремя: `code` = `restaurant_unavailable`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'

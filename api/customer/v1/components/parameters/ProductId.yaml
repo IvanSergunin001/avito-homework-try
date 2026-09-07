@@ -1,0 +1,7 @@
+name: productId
+in: path
+required: true
+description: Идентификатор товара.
+schema:
+  type: string
+  format: uuid

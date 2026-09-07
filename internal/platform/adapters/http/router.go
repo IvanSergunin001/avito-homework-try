@@ -10,9 +10,14 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 )
 
-// NewRouter собирает роутер площадки. Сейчас это общая обвязка и проба здоровья;
-// поверхности API (`/api/v1`, `/api/partner/v1`, `/api/admin/v1`) монтируются сюда
-// на следующих этапах.
+// NewRouter собирает роутер площадки: общая обвязка, проба здоровья и поверхности API.
+// Клиентская поверхность (`/api/v1`) уже смонтирована; партнёрская и админская
+// монтируются сюда на своих этапах — их серверные интерфейсы уже сгенерированы по
+// спецификациям.
 func NewRouter(log *slog.Logger) *chi.Mux {
-	return httpx.NewRouter(log)
+	r := httpx.NewRouter(log)
+
+	mountCustomerAPI(r)
+
+	return r
 }

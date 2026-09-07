@@ -22,8 +22,16 @@ func newPlatform(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// get выполняет запрос к службе и возвращает код ответа с телом.
-func get(t *testing.T, srv *httptest.Server, path string) (int, []byte) {
+// response — ответ службы, прочитанный целиком. Тестам нужны код, тип содержимого и тело;
+// соединением распоряжается помощник, поэтому в тестах о нём думать не приходится.
+type response struct {
+	Status      int
+	ContentType string
+	Body        []byte
+}
+
+// get выполняет запрос к службе и возвращает прочитанный ответ.
+func get(t *testing.T, srv *httptest.Server, path string) response {
 	t.Helper()
 
 	resp, err := srv.Client().Get(srv.URL + path)
@@ -37,20 +45,20 @@ func get(t *testing.T, srv *httptest.Server, path string) (int, []byte) {
 		t.Fatalf("прочитать ответ %s: %v", path, err)
 	}
 
-	return resp.StatusCode, body
+	return response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: body}
 }
 
 func TestRunningPlatformReportsItIsHealthy(t *testing.T) {
-	status, body := get(t, newPlatform(t), "/healthz")
+	resp := get(t, newPlatform(t), "/healthz")
 
-	if status != http.StatusOK {
-		t.Fatalf("GET /healthz вернул %d, ожидали 200", status)
+	if resp.Status != http.StatusOK {
+		t.Fatalf("GET /healthz вернул %d, ожидали 200", resp.Status)
 	}
 
 	var probe struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(body, &probe); err != nil {
+	if err := json.Unmarshal(resp.Body, &probe); err != nil {
 		t.Fatalf("разобрать ответ пробы: %v", err)
 	}
 	if probe.Status != "ok" {
@@ -61,13 +69,13 @@ func TestRunningPlatformReportsItIsHealthy(t *testing.T) {
 func TestHealthProbeLivesOutsideVersionedAPI(t *testing.T) {
 	srv := newPlatform(t)
 
-	if status, _ := get(t, srv, "/api/v1/healthz"); status != http.StatusNotFound {
-		t.Errorf("GET /api/v1/healthz вернул %d, ожидали 404: проба не версионируется", status)
+	if resp := get(t, srv, "/api/v1/healthz"); resp.Status != http.StatusNotFound {
+		t.Errorf("GET /api/v1/healthz вернул %d, ожидали 404: проба не версионируется", resp.Status)
 	}
 }
 
 func TestUnknownPathIsNotFound(t *testing.T) {
-	if status, _ := get(t, newPlatform(t), "/no-such-path"); status != http.StatusNotFound {
-		t.Errorf("GET /no-such-path вернул %d, ожидали 404", status)
+	if resp := get(t, newPlatform(t), "/no-such-path"); resp.Status != http.StatusNotFound {
+		t.Errorf("GET /no-such-path вернул %d, ожидали 404", resp.Status)
 	}
 }

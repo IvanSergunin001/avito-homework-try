@@ -1,0 +1,16 @@
+type: string
+description: |
+  Статус заказа. Нетерминальные: `pending`, `under_review`, `confirmed`, `cooking`,
+  `delivering`; терминальные: `completed`, `cancelled` — переходов из них нет.
+
+  `pending` ставит площадка при создании заказа, `under_review` — успешный синхронный
+  ответ заведения, дальнейшие переходы приходят уведомлениями от заведения.
+enum:
+  - pending
+  - under_review
+  - confirmed
+  - cooking
+  - delivering
+  - completed
+  - cancelled
+example: under_review

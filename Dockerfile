@@ -6,6 +6,7 @@
 
 ARG GO_VERSION=1.27
 ARG LINT_VERSION=v2.13.2
+ARG REDOCLY_VERSION=2.51.2
 
 # --- зависимости -------------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS deps
@@ -19,6 +20,43 @@ RUN go mod download
 # --- исходники ---------------------------------------------------------------
 FROM deps AS source
 COPY . .
+
+# --- сборка спецификаций в один документ -------------------------------------
+# Источник каждой спецификации разбит на файлы через `$ref`; партнёру и кодогенератору
+# нужен самодостаточный документ, поэтому перед генерацией спецификации собираются
+# в `bundle.yaml`. Линт стоит перед сборкой: сломанный контракт не должен доехать
+# до генератора.
+FROM redocly/cli:${REDOCLY_VERSION} AS bundle
+WORKDIR /spec
+COPY api ./api
+RUN redocly lint \
+        api/customer/v1/openapi.yaml \
+        api/partner/v1/openapi.yaml \
+        api/admin/v1/openapi.yaml \
+ && redocly bundle api/customer/v1/openapi.yaml -o /out/api/customer/v1/bundle.yaml \
+ && redocly bundle api/partner/v1/openapi.yaml  -o /out/api/partner/v1/bundle.yaml \
+ && redocly bundle api/admin/v1/openapi.yaml    -o /out/api/admin/v1/bundle.yaml
+
+# --- генерация кода по спецификациям -----------------------------------------
+# Генерируем от собранных документов, а не от дерева ссылок: результат не зависит от
+# того, как кодогенератор разрешает внешние `$ref`. Версия генератора закреплена
+# директивой `tool` в go.mod, поэтому повторный прогон даёт тот же байт в байт код.
+FROM deps AS codegen
+COPY api/codegen ./api/codegen
+COPY --from=bundle /out/api ./api
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go tool oapi-codegen -config api/codegen/platform_customer.yaml         api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/codegen/platform_partner.yaml          api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/codegen/platform_admin.yaml            api/admin/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/codegen/platform_restaurant_client.yaml api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/codegen/restaurant_partner.yaml        api/partner/v1/bundle.yaml
+
+# --- артефакты генерации ------------------------------------------------------
+# Пустой образ с одними результатами: `make api` выгружает его прямо в рабочее дерево
+# (`docker build --output`), потому что каталог хоста в сборку не примонтировать.
+FROM scratch AS api-artifacts
+COPY --from=bundle /out/api /api
+COPY --from=codegen /src/internal /internal
 
 # --- сборка службы -----------------------------------------------------------
 FROM source AS build

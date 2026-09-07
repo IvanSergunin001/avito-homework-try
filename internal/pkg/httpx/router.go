@@ -7,7 +7,6 @@
 package httpx
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -42,10 +41,5 @@ func NewRouter(log *slog.Logger) *chi.Mux {
 
 // health отвечает, что процесс жив и способен обслуживать запросы.
 func health(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		slog.ErrorContext(r.Context(), "write health response", slog.Any("error", err))
-	}
+	WriteJSON(r.Context(), w, http.StatusOK, map[string]string{"status": "ok"})
 }

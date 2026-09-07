@@ -1,0 +1,6 @@
+description: |
+  Идентификатор заказа уже использован для другого состава: `code` = `idempotency_key_reuse`.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'

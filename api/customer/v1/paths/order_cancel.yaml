@@ -1,0 +1,27 @@
+post:
+  operationId: cancelOrder
+  summary: Отменить заказ
+  description: |
+    Покупатель отменяет заказ, пока его не начали готовить: из `pending`, `under_review`
+    и `confirmed`. С `cooking` и дальше — `409` с кодом `order_not_cancellable`: продукты
+    уже потрачены, такие случаи разбирает саппорт.
+
+    Повторная отмена уже отменённого заказа возвращает `200`: ретрай не должен ломаться.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters/OrderId.yaml'
+    - $ref: '../components/parameters/UserId.yaml'
+  responses:
+    '200':
+      description: Заказ отменён.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Order.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '404':
+      $ref: '../components/responses/NotFound.yaml'
+    '409':
+      $ref: '../components/responses/Conflict.yaml'

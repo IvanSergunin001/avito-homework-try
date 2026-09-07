@@ -1,0 +1,38 @@
+post:
+  operationId: acceptOrder
+  summary: Принять заказ (реализует заведение)
+  description: |
+    Синхронная проверка заказа заведением: заведение — источник истины по наличию и цене.
+    Успешный ответ означает, что заказ принят на рассмотрение; площадка переводит его в
+    `under_review` и дальше ждёт уведомлений о статусах.
+
+    Повтор с тем же `Idempotency-Key` не создаёт второй заказ: заведение возвращает
+    результат первой попытки. Номер попытки приходит в `Idempotency-Attempt`.
+  tags:
+    - restaurant
+  parameters:
+    - $ref: '../components/parameters/IdempotencyKey.yaml'
+    - $ref: '../components/parameters/IdempotencyAttempt.yaml'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas/IncomingOrder.yaml'
+  responses:
+    '201':
+      description: Заказ принят на рассмотрение.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrderAcceptance.yaml'
+    '200':
+      description: Заказ с этим ключом идемпотентности уже принят — отдаём результат первой попытки.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrderAcceptance.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '409':
+      $ref: '../components/responses/Conflict.yaml'

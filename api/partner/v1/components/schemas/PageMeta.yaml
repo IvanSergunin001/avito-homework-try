@@ -1,0 +1,27 @@
+type: object
+description: |
+  Страница выдачи: смещение и размер, которые запросила площадка, плюс общее число
+  записей. Меню отдаётся страницами, чтобы большой каталог не приходилось отдавать
+  одним ответом.
+required:
+  - limit
+  - offset
+  - total
+properties:
+  limit:
+    type: integer
+    minimum: 1
+    maximum: 500
+    description: Сколько позиций запрошено на страницу.
+    example: 100
+  offset:
+    type: integer
+    minimum: 0
+    description: Сколько позиций пропущено от начала выдачи.
+    example: 0
+  total:
+    type: integer
+    format: int64
+    minimum: 0
+    description: Сколько позиций всего в меню заведения.
+    example: 240

@@ -1,0 +1,25 @@
+get:
+  operationId: listMenu
+  summary: Меню заведения (реализует заведение)
+  description: |
+    Постраничная выдача меню. Площадка забирает меню целиком, страницу за страницей, и
+    обновляет каталог по паре «заведение + `external_id`»; позиции, исчезнувшие из выдачи,
+    деактивируются на витрине.
+
+    Выгрузка применяется всё-или-ничего: если площадка не смогла дочитать меню до конца,
+    она отменяет синхронизацию целиком и оставляет прежний каталог — частично применённое
+    меню хуже устаревшего.
+  tags:
+    - restaurant
+  parameters:
+    - $ref: '../components/parameters/Limit.yaml'
+    - $ref: '../components/parameters/Offset.yaml'
+  responses:
+    '200':
+      description: Страница меню.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/MenuPage.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'

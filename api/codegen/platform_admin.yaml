@@ -1,0 +1,6 @@
+# Админская поверхность площадки: серверный интерфейс и модели.
+package: admin_v1
+output: internal/platform/adapters/http/admin_v1/server.gen.go
+generate:
+  chi-server: true
+  models: true

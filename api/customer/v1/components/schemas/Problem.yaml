@@ -1,0 +1,50 @@
+type: object
+description: |
+  Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
+  Поле `code` — расширение стандарта: машиночитаемая причина, по которой клиент выбирает
+  ветку поведения. Текст `detail` предназначен человеку и может меняться без версии API.
+required:
+  - type
+  - title
+  - status
+  - code
+properties:
+  type:
+    type: string
+    format: uri-reference
+    default: about:blank
+    description: Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+    example: about:blank
+  title:
+    type: string
+    description: Короткое человекочитаемое название проблемы.
+    example: Некорректный запрос
+  status:
+    type: integer
+    minimum: 100
+    maximum: 599
+    description: Код ответа HTTP, продублированный в теле.
+    example: 400
+  detail:
+    type: string
+    description: Пояснение для человека, привязанное к конкретному случаю.
+    example: 'limit: допустимы значения от 1 до 100'
+  instance:
+    type: string
+    format: uri-reference
+    description: Ссылка на конкретное вхождение проблемы.
+  code:
+    $ref: 'ProblemCode.yaml'
+  product_id:
+    type: string
+    format: uuid
+    description: |
+      Товар, из-за которого отказан заказ. Приходит с кодами `out_of_stock`,
+      `price_changed` и `unknown_product` — клиенту нужно знать, какую позицию править.
+    example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+  current_price:
+    allOf:
+      - $ref: 'Money.yaml'
+    description: |
+      Актуальная цена товара по данным заведения. Приходит с кодом `price_changed`,
+      чтобы клиент показал новую цену, а не отправлял покупателя пересобирать корзину.

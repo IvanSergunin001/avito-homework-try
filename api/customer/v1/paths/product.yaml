@@ -1,0 +1,18 @@
+get:
+  operationId: getProduct
+  summary: Карточка товара
+  tags:
+    - catalog
+  parameters:
+    - $ref: '../components/parameters/ProductId.yaml'
+  responses:
+    '200':
+      description: Товар.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Product.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '404':
+      $ref: '../components/responses/NotFound.yaml'

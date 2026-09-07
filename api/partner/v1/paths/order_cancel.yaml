@@ -1,0 +1,30 @@
+post:
+  operationId: cancelAcceptedOrder
+  summary: Отменить принятый заказ (реализует заведение)
+  description: |
+    Площадка просит заведение отменить заказ — так доезжает отмена покупателем.
+    После начала готовки заведение вправе отказать кодом `order_not_cancellable`.
+    Повторная отмена уже отменённого заказа возвращает `200`: ретрай не должен ломаться.
+  tags:
+    - restaurant
+  parameters:
+    - $ref: '../components/parameters/OrderId.yaml'
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas/CancellationRequest.yaml'
+  responses:
+    '200':
+      description: Заказ отменён.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrderCancellation.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '404':
+      $ref: '../components/responses/NotFound.yaml'
+    '409':
+      $ref: '../components/responses/Conflict.yaml'

@@ -1,0 +1,37 @@
+type: object
+description: |
+  Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
+  Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
+  выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
+  изменения версии поверхности.
+required:
+  - type
+  - title
+  - status
+  - code
+properties:
+  type:
+    type: string
+    format: uri-reference
+    default: about:blank
+    description: Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+    example: about:blank
+  title:
+    type: string
+    description: Короткое человекочитаемое название проблемы.
+    example: Требуется авторизация
+  status:
+    type: integer
+    minimum: 100
+    maximum: 599
+    description: Код ответа HTTP, продублированный в теле.
+    example: 401
+  detail:
+    type: string
+    description: Пояснение для человека, привязанное к конкретному случаю.
+  instance:
+    type: string
+    format: uri-reference
+    description: Ссылка на конкретное вхождение проблемы.
+  code:
+    $ref: 'ProblemCode.yaml'

@@ -1,0 +1,13 @@
+type: object
+description: Подтверждение отмены заказа заведением.
+required:
+  - order_id
+  - cancelled_at
+properties:
+  order_id:
+    type: string
+    format: uuid
+    example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+  cancelled_at:
+    type: string
+    format: date-time

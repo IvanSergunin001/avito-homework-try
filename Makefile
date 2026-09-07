@@ -5,7 +5,7 @@ TEST_IMAGE ?= avito-kitchen-test
 TEST_ARGS  ?= ./...
 DOCKER_SOCK := /var/run/docker.sock
 
-.PHONY: help up down logs clean-data build lint test
+.PHONY: help up down logs clean-data api api-check build lint test
 
 help: ## Список команд
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -25,6 +25,19 @@ clean-data: ## Погасить всё и удалить локальные да
 
 logs: ## Логи запущенных служб
 	docker compose logs --follow
+
+# Каталог хоста в сборку не примонтировать (демон Docker живёт снаружи), поэтому
+# результат генерации выгружается из образа-артефакта прямо в рабочее дерево.
+api: ## Собрать спецификации в bundle.yaml и сгенерировать по ним код
+	docker build --target api-artifacts --output type=local,dest=. .
+
+api-check: api ## Проверить, что генерация воспроизводится: повторный прогон без диффа
+	@test -z "$$(git status --porcelain -- api internal)" || { \
+		git status --short -- api internal; \
+		echo "Сгенерированное разошлось с закоммиченным — закоммитьте результат make api."; \
+		exit 1; \
+	}
+	@echo "Генерация воспроизводится: диффа нет."
 
 build: ## Скомпилировать репозиторий и прогнать go vet
 	docker build --target vet .

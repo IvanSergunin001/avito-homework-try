@@ -1,0 +1,20 @@
+get:
+  operationId: searchProducts
+  summary: Поиск товара по всем заведениям
+  description: |
+    Ищем блюдо, а не заведение: выдача идёт по всем активным заведениям сразу.
+  tags:
+    - catalog
+  parameters:
+    - $ref: '../components/parameters/SearchQuery.yaml'
+    - $ref: '../components/parameters/Limit.yaml'
+    - $ref: '../components/parameters/Offset.yaml'
+  responses:
+    '200':
+      description: Страница выдачи товаров.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProductPage.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'

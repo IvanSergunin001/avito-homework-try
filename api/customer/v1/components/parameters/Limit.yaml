@@ -1,0 +1,9 @@
+name: limit
+in: query
+required: false
+description: Размер страницы. По умолчанию 20, больше 100 за раз не отдаём.
+schema:
+  type: integer
+  minimum: 1
+  maximum: 100
+  default: 20
