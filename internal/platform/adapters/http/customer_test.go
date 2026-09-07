@@ -3,7 +3,6 @@ package http_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -18,19 +17,11 @@ type pageOfRestaurants struct {
 	} `json:"page"`
 }
 
-// problemDocument — отказ в формате problem+json.
-type problemDocument struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail"`
-	Code   string `json:"code"`
-}
-
-func catalogPage(t *testing.T, srv *httptest.Server, path string) pageOfRestaurants {
+// catalogPage запрашивает страницу витрины и разбирает её.
+func (p *platform) catalogPage(t *testing.T, path string) pageOfRestaurants {
 	t.Helper()
 
-	resp := get(t, srv, path)
+	resp := p.get(t, path)
 	if resp.Status != http.StatusOK {
 		t.Fatalf("GET %s вернул %d, ожидали 200: %s", path, resp.Status, resp.Body)
 	}
@@ -46,28 +37,10 @@ func catalogPage(t *testing.T, srv *httptest.Server, path string) pageOfRestaura
 	return page
 }
 
-// refusal требует, чтобы служба отказала в формате problem+json, и возвращает отказ.
-func refusal(t *testing.T, srv *httptest.Server, path string, status int) problemDocument {
-	t.Helper()
-
-	resp := get(t, srv, path)
-	if resp.Status != status {
-		t.Fatalf("GET %s вернул %d, ожидали %d: %s", path, resp.Status, status, resp.Body)
-	}
-	if resp.ContentType != "application/problem+json" {
-		t.Errorf("тип содержимого %q, ожидали application/problem+json", resp.ContentType)
-	}
-
-	var document problemDocument
-	if err := json.Unmarshal(resp.Body, &document); err != nil {
-		t.Fatalf("разобрать отказ: %v", err)
-	}
-
-	return document
-}
-
 func TestCatalogPageUsesWindowDeclaredInContractWhenClientDoesNotAskForOne(t *testing.T) {
-	page := catalogPage(t, newPlatform(t), "/api/v1/restaurants")
+	t.Parallel()
+
+	page := newPlatform(t).catalogPage(t, "/api/v1/restaurants")
 
 	if page.Page.Limit != 20 || page.Page.Offset != 0 {
 		t.Errorf("страница limit=%d offset=%d, ожидали умолчания контракта 20 и 0",
@@ -76,7 +49,9 @@ func TestCatalogPageUsesWindowDeclaredInContractWhenClientDoesNotAskForOne(t *te
 }
 
 func TestCatalogPageEchoesTheWindowTheClientAskedFor(t *testing.T) {
-	page := catalogPage(t, newPlatform(t), "/api/v1/restaurants?limit=5&offset=10")
+	t.Parallel()
+
+	page := newPlatform(t).catalogPage(t, "/api/v1/restaurants?limit=5&offset=10")
 
 	if page.Page.Limit != 5 || page.Page.Offset != 10 {
 		t.Errorf("страница limit=%d offset=%d, ожидали запрошенные 5 и 10",
@@ -84,8 +59,13 @@ func TestCatalogPageEchoesTheWindowTheClientAskedFor(t *testing.T) {
 	}
 }
 
-func TestEmptyCatalogIsAnEmptyPageAndNotAnAbsentCollection(t *testing.T) {
-	page := catalogPage(t, newPlatform(t), "/api/v1/restaurants")
+// Первый тест по шву: витрина площадки, за которой стоит пустая база с накатанными
+// миграциями. Ни одного заведения на площадке не зарегистрировано, и клиент получает не
+// отсутствие коллекции, а пустую страницу — фронтенду нечего различать в двух видах пустоты.
+func TestCatalogWithoutRegisteredRestaurantsIsAnEmptyPageAndNotAnAbsentCollection(t *testing.T) {
+	t.Parallel()
+
+	page := newPlatform(t).catalogPage(t, "/api/v1/restaurants")
 
 	if page.Items == nil {
 		t.Error("items пришли как null, ожидали пустой массив: контракт обещает коллекцию всегда")
@@ -97,7 +77,9 @@ func TestEmptyCatalogIsAnEmptyPageAndNotAnAbsentCollection(t *testing.T) {
 }
 
 func TestCatalogRefusesPageLargerThanContractAllows(t *testing.T) {
-	document := refusal(t, newPlatform(t), "/api/v1/restaurants?limit=101", http.StatusBadRequest)
+	t.Parallel()
+
+	document := newPlatform(t).refusal(t, "/api/v1/restaurants?limit=101", http.StatusBadRequest)
 
 	if document.Code != "validation_failed" {
 		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)
@@ -108,7 +90,9 @@ func TestCatalogRefusesPageLargerThanContractAllows(t *testing.T) {
 }
 
 func TestCatalogRefusesPageSizeThatIsNotANumber(t *testing.T) {
-	document := refusal(t, newPlatform(t), "/api/v1/restaurants?limit=неполный", http.StatusBadRequest)
+	t.Parallel()
+
+	document := newPlatform(t).refusal(t, "/api/v1/restaurants?limit=неполный", http.StatusBadRequest)
 
 	if document.Code != "validation_failed" {
 		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)

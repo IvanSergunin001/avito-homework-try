@@ -4,14 +4,16 @@
 TEST_IMAGE ?= avito-kitchen-test
 TEST_ARGS  ?= ./...
 DOCKER_SOCK := /var/run/docker.sock
+# Контекст, к которому относится новая миграция: платформа или коробка заведения.
+context    ?= platform
 
-.PHONY: help up down logs clean-data api api-check build lint test
+.PHONY: help up down logs clean-data api api-check migrate-up migrate-status migration build lint test
 
 help: ## Список команд
-	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-10s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-15s %s\n", $$1, $$2}'
 
-up: ## Поднять площадку, коробку заведения и PostgreSQL
-	docker compose up --build --detach --wait
+up: ## Поднять PostgreSQL, накатить миграции и поднять обе службы
+	docker compose up --build --detach --wait platform restaurant
 	@echo "Готово. Логи: make logs"
 
 down: ## Остановить всё; данные базы остаются в ./.data
@@ -45,6 +47,25 @@ build: ## Скомпилировать репозиторий и прогнат�
 lint: ## Линтер с конфигом из репозитория (.golangci.yml)
 	docker build --target lint .
 
+# Миграции накатываются отдельным шагом до старта служб (сервис `migrate` в compose.yaml).
+# Те же файлы миграций тесты накатывают на свою базу сами — см. internal/pkg/testdb.
+migrate-up: ## Накатить миграции на базу Compose
+	docker compose run --rm --build migrate up
+
+migrate-status: ## Показать, какие миграции применены
+	docker compose run --rm --build migrate status
+
+# Заготовка создаётся тем же инструментом, что и накатывает миграции, и выгружается из
+# образа в рабочее дерево: примонтировать каталог хоста в сборку нельзя (см. `api`).
+migration: ## Создать миграцию: make migration name=add_orders [context=platform|restaurant]
+	@test -n "$(name)" || { echo "нужно имя: make migration name=add_orders [context=platform]"; exit 1; }
+	docker build --target new-migration \
+		--build-arg MIGRATION_CONTEXT=$(context) \
+		--build-arg MIGRATION_NAME=$(name) \
+		--output type=local,dest=. .
+
 test: ## Тесты; сокет Docker нужен тестам с testcontainers
 	docker build --target test --tag $(TEST_IMAGE) .
-	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) $(TEST_IMAGE) go test $(TEST_ARGS)
+	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) \
+		--env TEST_DB_DSN --env TEST_KEEP_DB \
+		$(TEST_IMAGE) go test $(TEST_ARGS)

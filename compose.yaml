@@ -25,6 +25,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # Миграции — отдельный шаг запуска, а не часть старта служб: службе, которая мигрирует
+  # сама, нужны права на изменение схемы в бою, а при нескольких экземплярах — ещё и
+  # договорённость, кто накатывает первым. Службы стартуют только после того, как этот
+  # шаг завершился успешно.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   platform:
     build:
       context: .
@@ -39,6 +54,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${PLATFORM_HTTP_PORT:-8080}/healthz"]
       interval: 5s
@@ -59,6 +76,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${RESTAURANT_HTTP_PORT:-8081}/healthz"]
       interval: 5s
