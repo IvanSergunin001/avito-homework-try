@@ -8,6 +8,7 @@ ARG GO_VERSION=1.27
 ARG LINT_VERSION=v2.13.2
 ARG REDOCLY_VERSION=2.51.2
 ARG GOOSE_VERSION=v3.28.0
+ARG PLANTUML_VERSION=1.2026.8
 
 # --- зависимости -------------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS deps
@@ -62,6 +63,29 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM scratch AS api-artifacts
 COPY --from=bundle /out/api /api
 COPY --from=codegen /src/internal /internal
+
+# --- диаграммы ----------------------------------------------------------------
+# Диаграммы — код: C4 и оба CJM лежат исходниками в `docs/puml`, а картинки в `docs/img`
+# порождаются из них. Нарисованная руками картинка расходится с системой на первой же
+# правке, и заметить это некому; отрисовка одной командой (`make diagrams`) делает
+# расхождение видимым — пересобранная диаграмма даёт дифф.
+#
+# Ни одной внешней ссылки при отрисовке не разрешается: библиотека C4 входит в поставку
+# PlantUML, поэтому сборка не ходит в сеть и не зависит от того, жив ли сегодня чужой
+# репозиторий с макросами. `-failfast2` останавливает всё на первой сломанной диаграмме:
+# PlantUML иначе положит текст ошибки картинкой, и в репозиторий уедет она.
+FROM plantuml/plantuml:${PLANTUML_VERSION} AS diagrams
+USER root
+WORKDIR /docs
+COPY docs/puml ./puml
+RUN mkdir -p /out/docs/img \
+ && java -jar /opt/plantuml.jar -failfast2 -nometadata -tpng -o /out/docs/img puml/*.puml
+
+# --- артефакты отрисовки ------------------------------------------------------
+# Как и у генерации по спецификациям: каталог хоста в сборку не примонтировать, поэтому
+# результат выгружается из пустого образа прямо в рабочее дерево.
+FROM scratch AS diagram-artifacts
+COPY --from=diagrams /out /
 
 # --- инструмент миграций ------------------------------------------------------
 # goose ставится отдельно и в go.mod не попадает: миграции накатывает отдельный шаг
