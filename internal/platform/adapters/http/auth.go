@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -86,9 +87,33 @@ func (g guard) require(want application.Role, refuse accessRefusals) func(http.H
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			// Опознанный уезжает дальше в контексте запроса: партнёрская операция
+			// выполняется от имени конкретного заведения, а взять его обработчику больше
+			// неоткуда — из запроса заведение не берётся никогда, иначе предъявитель
+			// одного ключа говорил бы от имени соседа.
+			next.ServeHTTP(w, r.WithContext(withCaller(r.Context(), caller)))
 		})
 	}
+}
+
+// callerKey — ключ опознанного в контексте запроса. Тип собственный и неэкспортируемый:
+// с ним чужой пакет не подменит значение, положив в контекст свою строку.
+type callerKey struct{}
+
+// withCaller кладёт опознанного в контекст запроса.
+func withCaller(ctx context.Context, caller application.Caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, caller)
+}
+
+// callerFrom достаёт опознанного из контекста запроса.
+//
+// Отсутствие означает, что обработчик закрытой поверхности выполнился в обход проверки
+// токена, — то есть ошибку сборки роутера, а не запроса: сообщать о ней клиенту нечего,
+// и вызывающая сторона отвечает на неё как на отказ по вине площадки.
+func callerFrom(ctx context.Context) (application.Caller, bool) {
+	caller, ok := ctx.Value(callerKey{}).(application.Caller)
+
+	return caller, ok
 }
 
 // bearerToken достаёт токен из значения заголовка авторизации.

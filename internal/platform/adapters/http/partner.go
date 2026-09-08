@@ -1,6 +1,8 @@
 package http
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -24,16 +26,21 @@ const partnerBaseURL = "/api/partner/v1"
 // которую забыли закрыть.
 type partnerAPI struct {
 	partner_v1.Unimplemented
+
+	catalog *application.CatalogSync
+	log     *slog.Logger
 }
 
 // mountPartnerAPI монтирует партнёрскую поверхность на роутер площадки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с контрактом не может.
-func mountPartnerAPI(r chi.Router, access guard) {
+func mountPartnerAPI(r chi.Router, access guard, catalog *application.CatalogSync, log *slog.Logger) {
+	api := partnerAPI{catalog: catalog, log: log}
+
 	r.Group(func(r chi.Router) {
 		r.Use(access.require(application.RolePartner, partnerRefusals))
 
-		partner_v1.HandlerWithOptions(partnerAPI{}, partner_v1.ChiServerOptions{
+		partner_v1.HandlerWithOptions(api, partner_v1.ChiServerOptions{
 			BaseURL:    partnerBaseURL,
 			BaseRouter: r,
 			// Сюда попадают ошибки разбора параметров: неверный uuid в пути. Контракт
@@ -44,6 +51,33 @@ func mountPartnerAPI(r chi.Router, access guard) {
 			},
 		})
 	})
+}
+
+// RefreshCatalog забирает меню заведения внеочередно — не дожидаясь очередного цикла
+// синхронизации.
+//
+// Заведение зовёт эту ручку затем, чтобы изменение цены или стоп-листа доехало до витрины
+// сразу, поэтому меню забирается прямо здесь, а не откладывается в очередь: отложенное
+// «немедленное обновление» отличалось бы от планового только названием.
+//
+// Ответ — `202` в любом случае, и это не небрежность, а контракт: заведение просит
+// площадку сходить за меню, а не сообщить, что она о нём думает. Неудачная выгрузка
+// каталога не касается вовсе — заведение остаётся на витрине с прежним меню, — и
+// рассказать о ней есть кому: она уходит в лог площадки.
+func (a partnerAPI) RefreshCatalog(w http.ResponseWriter, r *http.Request) {
+	caller, ok := callerFrom(r.Context())
+	if !ok {
+		writeInternalFailure(a.log, w, r, errors.New("партнёрская операция выполнена без опознания"))
+
+		return
+	}
+
+	if err := a.catalog.Refresh(r.Context(), caller.Partner); err != nil {
+		a.log.WarnContext(r.Context(), "on-demand catalog sync failed",
+			slog.String("restaurant_id", caller.Partner.ID.String()), slog.Any("error", err))
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // partnerRefusals — отказы в доступе к партнёрской поверхности в её собственной схеме.

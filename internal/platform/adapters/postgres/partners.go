@@ -79,3 +79,34 @@ func (r *Restaurants) FindByKeyHash(ctx context.Context, keyHash string) (domain
 
 	return partner, nil
 }
+
+// ListActive перечисляет подключённые заведения вместе с их реквизитами интеграции.
+//
+// Порядок задан явно: обход синхронизации идёт по нему, и заведение, оказавшееся
+// последним, должно оставаться последним между прогонами — иначе одно и то же заведение
+// то и дело оказывалось бы тем, до которого обход не дошёл.
+func (r *Restaurants) ListActive(ctx context.Context) ([]domain.Partner, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, name, base_url, is_active
+		FROM platform.restaurants
+		WHERE is_active
+		ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("прочитать подключённые заведения: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var partners []domain.Partner
+	for rows.Next() {
+		var partner domain.Partner
+		if err := rows.Scan(&partner.ID, &partner.Name, &partner.BaseURL, &partner.IsActive); err != nil {
+			return nil, fmt.Errorf("прочитать подключённое заведение: %w", err)
+		}
+		partners = append(partners, partner)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("перебрать подключённые заведения: %w", err)
+	}
+
+	return partners, nil
+}

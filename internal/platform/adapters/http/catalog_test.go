@@ -469,8 +469,8 @@ func (p *platform) fillMenu(t *testing.T, restaurant uuid.UUID, count int) {
 	t.Helper()
 
 	_, err := p.db.ExecContext(t.Context(), `
-		INSERT INTO platform.products (id, restaurant_id, name, price)
-		SELECT gen_random_uuid(), $1, 'Позиция №' || number, 10000
+		INSERT INTO platform.products (id, restaurant_id, external_id, name, price)
+		SELECT gen_random_uuid(), $1, 'позиция-' || number, 'Позиция №' || number, 10000
 		FROM generate_series(1, $2) AS number`, restaurant, count)
 	if err != nil {
 		t.Fatalf("набить меню: %v", err)
