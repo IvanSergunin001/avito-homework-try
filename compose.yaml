@@ -13,9 +13,12 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      # У образа postgres:18 данные лежат в подкаталоге /var/lib/postgresql/<версия>,
-      # поэтому том монтируется на каталог целиком — иначе не сработает pg_upgrade.
-      - pgdata:/var/lib/postgresql
+      # Данные лежат в каталоге репозитория, а не в томе Docker: полный сброс Docker
+      # (`docker system prune --volumes`, переустановка) их не трогает, и заглянуть в них
+      # можно обычными средствами хоста. У образа postgres:18 данные лежат в подкаталоге
+      # /var/lib/postgresql/<версия>, поэтому монтируется каталог целиком — иначе не
+      # сработает pg_upgrade.
+      - ./.data/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kitchen} -d ${POSTGRES_DB:-kitchen}"]
       interval: 5s
@@ -62,5 +65,3 @@ services:
       timeout: 3s
       retries: 10
 
-volumes:
-  pgdata:

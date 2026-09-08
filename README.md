@@ -37,6 +37,11 @@ curl http://localhost:8080/healthz   # площадка      -> {"status":"ok"}
 curl http://localhost:8081/healthz   # коробка       -> {"status":"ok"}
 ```
 
+Данные PostgreSQL лежат в `./.data/postgres` — в каталоге репозитория, а не в томе Docker,
+поэтому полный сброс Docker их не уносит. Каталог в `.gitignore`; создаёт его Docker и
+принадлежит он `root`, поэтому чистая база — это `make down` и удаление каталога с правами
+суперпользователя.
+
 ## Конфигурация
 
 Только переменные окружения; файлов конфигурации у служб нет. Все ключи вместе со
@@ -56,7 +61,7 @@ cp .env.example .env
 
 | Команда | Что делает |
 |---|---|
-| `make up`, `make down`, `make logs` | поднять, погасить вместе с данными базы, посмотреть логи |
+| `make up`, `make down`, `make logs` | поднять, погасить, посмотреть логи |
 | `make build` | компиляция всего репозитория и `go vet` в контейнере |
 | `make test` | тесты в контейнере (`make test TEST_ARGS='-run Health ./...'`) |
 | `make lint` | golangci-lint с конфигом [`.golangci.yml`](.golangci.yml) из репозитория |

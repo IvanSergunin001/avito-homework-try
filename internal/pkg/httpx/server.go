@@ -6,12 +6,19 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/IvanSergunin001/Test157/internal/pkg/config"
 )
 
-// Serve поднимает HTTP-сервер и блокируется, пока не отменят ctx. После отмены даёт
-// начатым запросам shutdownTimeout на завершение: в Compose и в оркестраторе остановка
-// приходит сигналом, и обрывать на нём принятый заказ не за что.
-func Serve(ctx context.Context, log *slog.Logger, addr string, handler http.Handler, shutdownTimeout time.Duration) error {
+// Serve поднимает HTTP-сервер по настройкам cfg и блокируется, пока не отменят ctx. После
+// отмены даёт начатым запросам cfg.ShutdownTimeout на завершение: в Compose и в оркестраторе
+// остановка приходит сигналом, и обрывать на нём принятый заказ не за что.
+//
+// Настройки передаются одним значением, а не адресом и таймаутом по отдельности: это одна
+// и та же тройка полей, которая всё равно ездит вместе от разбора окружения до сервера.
+func Serve(ctx context.Context, log *slog.Logger, cfg config.Service, handler http.Handler) error {
+	addr := cfg.Addr()
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -35,10 +42,10 @@ func Serve(ctx context.Context, log *slog.Logger, addr string, handler http.Hand
 		}
 		return nil
 	case <-ctx.Done():
-		log.InfoContext(ctx, "http server stopping", slog.Duration("timeout", shutdownTimeout))
+		log.InfoContext(ctx, "http server stopping", slog.Duration("timeout", cfg.ShutdownTimeout))
 	}
 
-	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := srv.Shutdown(stopCtx); err != nil {

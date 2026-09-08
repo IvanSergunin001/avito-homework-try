@@ -37,5 +37,5 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return httpx.Serve(ctx, log, cfg.Addr(), platformhttp.NewRouter(log), cfg.ShutdownTimeout)
+	return httpx.Serve(ctx, log, cfg, platformhttp.NewRouter(log))
 }

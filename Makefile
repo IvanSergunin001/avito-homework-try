@@ -14,8 +14,8 @@ up: ## Поднять площадку, коробку заведения и Pos
 	docker compose up --build --detach --wait
 	@echo "Готово. Логи: make logs"
 
-down: ## Остановить всё и удалить данные базы
-	docker compose down --volumes
+down: ## Остановить всё; данные базы остаются в ./.data
+	docker compose down
 
 logs: ## Логи запущенных служб
 	docker compose logs --follow
