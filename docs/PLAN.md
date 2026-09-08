@@ -300,8 +300,9 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
   внешнюю БД из compose; `TEST_KEEP_DB=1` — не убивать контейнер после прогона и напечатать строку подключения
   (чтобы заглянуть в базу после тестов). Брейкпоинты работают в любом режиме — это обычный `go test`.
 
-Миграции накатывает goose CLI отдельным сервисом compose (микро-образ с бинарём из релиза); сервисные бинари
-не содержат goose и не мигрируют на старте. `make migrate-up`, `make migrate-status`, `make migration name=...`.
+Миграции накатывает goose CLI отдельным сервисом compose (микро-образ с бинарём, собранным из закреплённой
+версии); сервисные бинари не содержат goose и не мигрируют на старте.
+`make migrate-up`, `make migrate-status`, `make migration name=...`.
 
 ## 12. Порядок работ
 

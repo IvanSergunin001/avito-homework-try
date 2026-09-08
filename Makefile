@@ -5,7 +5,14 @@ API_OUT    ?= .api-artifacts
 TEST_IMAGE ?= avito-kitchen-test
 TEST_ARGS  ?= ./...
 DOCKER_SOCK := /var/run/docker.sock
-# Контекст, к которому относится новая миграция: платформа или коробка заведения.
+# Сеть контейнера с тестами. `host` нужен режиму TEST_DB_DSN: иначе строка подключения
+# резолвится изнутри контейнера тестов, и база, поднятая рядом (`docker compose up
+# postgres`), по `localhost:5432` недостижима. Базу в сети Compose видно так:
+# make test TEST_NETWORK=avito-kitchen_default
+TEST_NETWORK ?= host
+# Контекст, к которому относится новая миграция: платформа или коробка заведения. Тот же
+# перечень контекстов повторяется в `Dockerfile` (шаг миграций), в `internal/pkg/testdb`
+# (`migrationSets`) и в таблице контекстов README — третий правится во всех местах разом.
 context    ?= platform
 
 .PHONY: help up down logs clean-data api api-check migrate-up migrate-status migration build lint test
@@ -66,13 +73,18 @@ migrate-status: ## Показать, какие миграции примене�
 # образа в рабочее дерево: примонтировать каталог хоста в сборку нельзя (см. `api`).
 migration: ## Создать миграцию: make migration name=add_orders [context=platform|restaurant]
 	@test -n "$(name)" || { echo "нужно имя: make migration name=add_orders [context=platform]"; exit 1; }
+	@test -n "$(filter $(context),platform restaurant)" || { echo "неизвестный контекст '$(context)': есть platform и restaurant"; exit 1; }
 	docker build --target new-migration \
 		--build-arg MIGRATION_CONTEXT=$(context) \
 		--build-arg MIGRATION_NAME=$(name) \
 		--output type=local,dest=. .
 
+# Вывод прошедшего пакета `go test` без `-v` глотает целиком, поэтому в режиме
+# TEST_KEEP_DB строку подключения к оставленной базе было бы видно только после падения.
+# Флаг добавляется сам, когда переменная выставлена: смотреть в базу после зелёного
+# прогона — ровно то, ради чего режим и заводился.
 test: ## Тесты; сокет Docker нужен тестам с testcontainers
 	docker build --target test --tag $(TEST_IMAGE) .
-	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) \
+	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) --network $(TEST_NETWORK) \
 		--env TEST_DB_DSN --env TEST_KEEP_DB \
-		$(TEST_IMAGE) go test $(TEST_ARGS)
+		$(TEST_IMAGE) go test $(if $(TEST_KEEP_DB),-v) $(TEST_ARGS)

@@ -67,13 +67,28 @@ COPY --from=codegen /src/api /api
 COPY --from=codegen /src/internal /internal
 
 # --- инструмент миграций ------------------------------------------------------
-# goose ставится отдельно и в go.mod не попадает: миграции накатывает отдельный шаг
-# запуска, а службы не должны тянуть инструмент миграций в свои зависимости. Версия
-# закреплена аргументом, чтобы шаг миграций был воспроизводим.
+# goose CLI ставится отдельным бинарём и в бинари служб не попадает: миграции накатывает
+# отдельный шаг запуска, а службе инструмент миграций не нужен — на этом стоит сторож
+# `TestServiceBinariesDoNotCarryTheMigrationTool`. В go.mod goose при этом есть:
+# его библиотеку импортирует тестовая оснастка (`internal/pkg/testdb`), чтобы накатывать
+# в тестах те же миграции. Версия CLI закреплена аргументом (`GOOSE_VERSION`) и держится
+# той же, что у библиотеки в go.mod: тогда тесты и шаг запуска катят одним и тем же goose.
 FROM golang:${GO_VERSION}-alpine AS goose
 ARG GOOSE_VERSION
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+
+# --- журналы миграций ---------------------------------------------------------
+# Имя журнала применённых миграций объявлено Go-константой (`VersionTable` в пакете
+# миграций контекста): оттуда его берёт тестовая оснастка, и шаг запуска обязан брать то
+# же самое — иначе тесты и запуск разойдутся по разным журналам молча. Поэтому имя не
+# пишется здесь руками, а вынимается из тех же констант.
+FROM source AS migration-journals
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    mkdir -p /journals \
+ && for context in platform restaurant; do \
+        go run ./internal/tools/migrationjournal "${context}" > "/journals/${context}"; \
+    done
 
 # --- шаг миграций -------------------------------------------------------------
 # Образ с одним бинарём и SQL-файлами: Compose выполняет его до старта служб
@@ -82,16 +97,22 @@ FROM alpine:3.22 AS migrate
 COPY --from=goose /go/bin/goose /usr/local/bin/goose
 COPY internal/platform/migrations/*.sql /migrations/platform/
 COPY internal/restaurant/migrations/*.sql /migrations/restaurant/
-# У каждого контекста свой каталог миграций и свой журнал применённых. Журналы лежат в
-# public, а не в самих схемах: goose создаёт журнал до первой миграции, а первая миграция
-# как раз и создаёт схему.
+COPY --from=migration-journals /journals /journals
+# У каждого контекста свой каталог миграций и свой журнал применённых; имя журнала лежит
+# рядом, в /journals/<контекст>, и приходит из Go-константы. Журналы лежат в public,
+# а не в самих схемах: goose создаёт журнал до первой миграции, а первая миграция как раз
+# и создаёт схему.
 COPY <<'SCRIPT' /usr/local/bin/migrate
 #!/bin/sh
 set -eu
 
+# Перечень контекстов повторяется там, где Go не дотягивается: здесь, в стадии
+# `migration-journals`, в значении `context` по умолчанию (Makefile) и в таблице
+# контекстов (README.md). Третий контекст правится во всех этих местах разом, и в
+# `migrationSets` (internal/pkg/testdb) тоже.
 for context in platform restaurant; do
 	echo "== ${context}: goose $*"
-	goose -table "public.goose_${context}_version" -dir "/migrations/${context}" "$@"
+	goose -table "$(cat "/journals/${context}")" -dir "/migrations/${context}" "$@"
 done
 SCRIPT
 RUN chmod +x /usr/local/bin/migrate

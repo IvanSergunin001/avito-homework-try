@@ -8,7 +8,11 @@
 //	                                                 с базой из окружения запуска;
 //	TEST_KEEP_DB=1                                 — не убирать базу после прогона и
 //	                                                 напечатать строку подключения, чтобы
-//	                                                 заглянуть в данные после падения.
+//	                                                 заглянуть в данные после прогона.
+//
+// Вывод прошедшего пакета `go test` без `-v` глотает целиком, поэтому в режиме
+// TEST_KEEP_DB строку подключения видно только с `-v`: `make test` добавляет флаг сам,
+// когда переменная выставлена.
 //
 // Отладчик работает в любом режиме: это обычный `go test`, никакой обёртки вокруг него
 // оснастка не заводит и в отдельном процессе ничего не запускает.
@@ -75,9 +79,10 @@ func New(t *testing.T) *DB {
 	t.Helper()
 
 	name := databaseName(t)
-	dsn := databaseDSN(t, serverDSN(t), name)
+	instance := serverDSN(t)
+	dsn := databaseDSN(t, instance, name)
 
-	admin := connect(t, serverDSN(t))
+	admin := connect(t, instance)
 	// Имя базы — идентификатор, а не значение, и параметром запроса не передаётся;
 	// собирает его databaseName из имени теста и случайного хвоста.
 	_, err := admin.ExecContext(t.Context(), `CREATE DATABASE "`+name+`"`)
@@ -113,6 +118,11 @@ type migrationSet struct {
 }
 
 // migrationSets перечисляет контексты в том же порядке, в каком их накатывает шаг запуска.
+//
+// Тот же перечень повторяется там, где Go не дотягивается: в скрипте шага миграций и в
+// заготовке новой миграции (`Dockerfile`, цели `migrate` и `migration-draft`), в значении
+// по умолчанию для `context` (`Makefile`) и в таблице контекстов (`README.md`). Третий
+// контекст или переименование правятся во всех этих местах разом.
 var migrationSets = []migrationSet{
 	{name: "площадка", files: platformmigrations.FS, versionTable: platformmigrations.VersionTable},
 	{name: "коробка заведения", files: boxmigrations.FS, versionTable: boxmigrations.VersionTable},
@@ -238,7 +248,8 @@ func databaseDSN(t *testing.T, serverDSN, name string) string {
 
 	parsed, err := url.Parse(serverDSN)
 	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
-		t.Fatalf("%s должна быть строкой вида postgres://user:pass@host:port/db, получили %q", DSNEnv, serverDSN)
+		t.Fatalf("строка подключения к инстансу должна быть вида postgres://user:pass@host:port/db, получили %q",
+			masked(serverDSN))
 	}
 	parsed.Path = "/" + name
 
@@ -251,7 +262,7 @@ func connect(t *testing.T, dsn string) *sql.DB {
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("открыть подключение к %s: %v", dsn, err)
+		t.Fatalf("открыть подключение к %s: %v", masked(dsn), err)
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), connectTimeout)
@@ -259,7 +270,7 @@ func connect(t *testing.T, dsn string) *sql.DB {
 
 	if err := db.PingContext(ctx); err != nil {
 		closeQuietly(db)
-		t.Fatalf("база не отвечает по %s: %v", dsn, err)
+		t.Fatalf("база не отвечает по %s: %v", masked(dsn), err)
 	}
 
 	return db
@@ -286,6 +297,23 @@ func dropDatabase(t *testing.T, name string) {
 	if _, err := admin.ExecContext(ctx, `DROP DATABASE IF EXISTS "`+name+`" WITH (FORCE)`); err != nil {
 		t.Errorf("убрать базу %s: %v", name, err)
 	}
+}
+
+// masked прячет пароль в строке подключения. DSN попадает в сообщения об ошибках, а с
+// внешней базой (TEST_DB_DSN) пароль в ней настоящий: в логе прогона ему не место.
+// Строка подключения, которую печатает режим TEST_KEEP_DB, маскировке не подлежит — по
+// ней в базу как раз и заходят руками.
+func masked(dsn string) string {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return "строка подключения неразборчива"
+	}
+
+	if _, set := parsed.User.Password(); set {
+		parsed.User = url.UserPassword(parsed.User.Username(), "***")
+	}
+
+	return parsed.String()
 }
 
 // closeQuietly закрывает подключение: закрывать нечего, кроме как молча, — ошибка закрытия
