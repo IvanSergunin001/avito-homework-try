@@ -120,8 +120,46 @@ func (r *Restaurants) FindByKeyHash(ctx context.Context, keyHash string) (domain
 	return partner, nil
 }
 
+// ListActive перечисляет подключённые заведения вместе с их реквизитами интеграции.
+//
+// Порядок задан явно: обход синхронизации идёт по нему, и заведение, оказавшееся
+// последним, должно оставаться последним между прогонами — иначе одно и то же заведение
+// то и дело оказывалось бы тем, до которого обход не дошёл.
+func (r *Restaurants) ListActive(ctx context.Context) ([]domain.Partner, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+partnerColumns+`
+		FROM platform.restaurants
+		WHERE is_active
+		ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("прочитать подключённые заведения: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var partners []domain.Partner
+	for rows.Next() {
+		partner, err := scanPartner(rows)
+		if err != nil {
+			return nil, fmt.Errorf("прочитать подключённое заведение: %w", err)
+		}
+		partners = append(partners, partner)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("перебрать подключённые заведения: %w", err)
+	}
+
+	return partners, nil
+}
+
+// partnerRow — ряд заведения, прочитанный запросом за одним заведением (`*sql.Row`) или
+// обходом (`*sql.Rows`). Общий он затем, чтобы порядок колонок разбирался в одном месте:
+// разойдись разбор с partnerColumns — и адрес заведения уехал бы в его название.
+type partnerRow interface {
+	Scan(dest ...any) error
+}
+
 // scanPartner читает ряд заведения в порядке partnerColumns.
-func scanPartner(row *sql.Row) (domain.Partner, error) {
+func scanPartner(row partnerRow) (domain.Partner, error) {
 	var partner domain.Partner
 
 	err := row.Scan(&partner.ID, &partner.Name, &partner.BaseURL, &partner.IsActive,

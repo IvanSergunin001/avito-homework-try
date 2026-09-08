@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -36,11 +37,15 @@ import (
 // ему по условию задания, и админские ручки в MVP не закрыты ничем (см. README).
 var staffMember = uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1aff")
 
-// boxAddress — адрес коробки заведения, который тесты дают заведению при подключении.
-// Никто по нему не ходит: синхронизация каталога и оформление заказа приезжают своими
-// слайсами и подменят сторону заведения HTTP-заглушкой — здесь адрес важен только как
-// реквизит, который площадка хранит и меняет.
+// boxAddress — адрес коробки заведения, который тесты дают заведению, когда за меню к
+// нему никто не пойдёт: по этому адресу не отвечает никто. Тесты синхронизации подключают
+// заведение по адресу поднятой заглушки — см. `catalog_sync_test.go`.
 const boxAddress = "http://box.test:8081"
+
+// syncTimeout — сколько площадка, поднятая для теста, ждёт заведение, забирая у него
+// меню. Настоящий берётся из конфигурации службы; здесь он такой же по смыслу — предел
+// ожидания стороннего заведения, — но короче, чтобы тест не ждал вместе с ней.
+const syncTimeout = 5 * time.Second
 
 // platform — площадка, поднятая целиком для одного теста.
 type platform struct {
@@ -60,11 +65,23 @@ type platform struct {
 func newPlatform(t *testing.T) *platform {
 	t.Helper()
 
+	return newPlatformWaitingForBox(t, syncTimeout)
+}
+
+// newPlatformWaitingForBox поднимает площадку, которая ждёт ответа заведения не дольше
+// waitForBox. Отдельный помощник нужен ровно одному правилу — «заведение, которое не
+// отвечает, не держит синхронизацию вечно», — и проверять его общим для всех тестов
+// пределом значило бы ждать вместе с площадкой пять секунд на каждом прогоне.
+func newPlatformWaitingForBox(t *testing.T, waitForBox time.Duration) *platform {
+	t.Helper()
+
 	db := testdb.New(t)
 
 	// Логи службы в тестах никому не нужны, но middleware, которое их пишет, остаётся
 	// на месте: шов проверяется вместе со всей обвязкой, а не в обход неё.
-	srv := httptest.NewServer(platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB))
+	router, _ := platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB, waitForBox)
+
+	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
 	return &platform{srv: srv, db: db}
@@ -347,9 +364,14 @@ type menuItem struct {
 
 // addProduct кладёт позицию в меню заведения и возвращает её идентификатор.
 //
-// Позиция появляется прямо в базе: синхронизации каталога на этом этапе ещё нет, а
-// подменять хранилище нечем — оно настоящее. Как только каталог начнёт приезжать от
-// заведения, исходное состояние будет готовиться им.
+// Позиция появляется прямо в базе, хотя каталог уже умеет приезжать синхронизацией: это
+// тесты витрины, и готовить их состояние выгрузкой значило бы проверять правила витрины
+// через правила синхронизации — упавший тест поиска перестал бы отвечать на вопрос, что
+// именно сломано. Тем же способом готовится состояние, которого выгрузка дать не может:
+// меню заведения, которое уже не работает.
+//
+// Синхронизация проверяется там, где она и есть предмет проверки, — в `catalog_sync_test.go`,
+// целиком через партнёрскую ручку и заглушку заведения.
 func (p *platform) addProduct(t *testing.T, restaurant uuid.UUID, item menuItem) uuid.UUID {
 	t.Helper()
 
@@ -359,9 +381,9 @@ func (p *platform) addProduct(t *testing.T, restaurant uuid.UUID, item menuItem)
 	}
 
 	_, err = p.db.ExecContext(t.Context(), `
-		INSERT INTO platform.products (id, restaurant_id, name, description, price, is_available)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, restaurant, item.Name, item.Description, item.Price, !item.OutOfStock)
+		INSERT INTO platform.products (id, restaurant_id, external_id, name, description, price, is_available)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, restaurant, id.String(), item.Name, item.Description, item.Price, !item.OutOfStock)
 	if err != nil {
 		t.Fatalf("завести товар %q: %v", item.Name, err)
 	}

@@ -82,11 +82,12 @@ func (p *Products) Search(ctx context.Context, query application.ProductQuery) (
 
 // Find отдаёт товар работающего заведения по идентификатору.
 //
-// Условие «заведение работает» стоит в самом запросе: карточка товара закрытого заведения
-// не должна открываться по прямой ссылке после того, как товар исчез из выдачи.
+// Условия «заведение работает» и «позиция есть в меню» стоят в самом запросе: карточка
+// не должна открываться по прямой ссылке после того, как товар исчез из выдачи, — ни
+// когда закрылось заведение, ни когда позиция пропала из его выгрузки.
 func (p *Products) Find(ctx context.Context, id uuid.UUID) (domain.Product, error) {
 	row := p.db.QueryRowContext(ctx,
-		`SELECT `+productColumns+fromWorkingRestaurants+` WHERE p.id = $1 AND r.is_active`, id)
+		`SELECT `+productColumns+fromWorkingRestaurants+` WHERE p.id = $1 AND r.is_active AND p.is_active`, id)
 
 	product, err := scanProduct(row)
 	switch {
@@ -107,7 +108,10 @@ func (p *Products) Find(ctx context.Context, id uuid.UUID) (domain.Product, erro
 // триграммный индекс, а меню заведения — в индекс меню. Значения при этом остаются
 // параметрами: в текст запроса не попадает ничего, что пришло от клиента.
 func searchFilter(query application.ProductQuery) (string, []any) {
-	conditions := []string{"r.is_active"}
+	// Деактивированная позиция — та, которой не оказалось в последней выгрузке заведения.
+	// Она остаётся в таблице ради ссылок и истории, но витрина её не показывает: заказать
+	// то, чего у заведения больше нет, нельзя.
+	conditions := []string{"r.is_active", "p.is_active"}
 	args := make([]any, 0, 2)
 
 	if query.Restaurant != nil {
