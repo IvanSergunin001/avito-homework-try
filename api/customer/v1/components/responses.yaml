@@ -1,0 +1,34 @@
+# Отказы, специфичные для клиентского API: их тело — `Problem` с полями покупателя.
+# Одинаковые для всех API отказы (400, 404) — в `api/common/v1`.
+
+BadGateway:
+  description: |
+    Заведение ответило неверно или недоступно: `code` = `restaurant_unavailable`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/Problem'
+
+Conflict:
+  description: |
+    Отказ по правилам предметной области: закончился товар, изменилась цена, заказ уже нельзя отменить.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/Problem'
+
+GatewayTimeout:
+  description: |
+    Заведение не ответило вовремя: `code` = `restaurant_unavailable`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/Problem'
+
+UnprocessableEntity:
+  description: |
+    Идентификатор заказа уже использован для другого состава: `code` = `idempotency_key_reuse`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/Problem'

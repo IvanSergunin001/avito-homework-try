@@ -1,6 +1,0 @@
-description: |
-  Запрос не проходит проверку: `code` = `validation_failed`.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

@@ -1,7 +1,0 @@
-name: restaurantId
-in: path
-required: true
-description: Идентификатор заведения.
-schema:
-  type: string
-  format: uuid

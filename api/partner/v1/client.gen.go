@@ -312,17 +312,19 @@ type Offset = int
 // OrderId defines model for OrderId.
 type OrderId = openapi_types.UUID
 
-// BadRequest Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type BadRequest = Problem
+// BadRequest Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type BadRequest = ProblemBase
 
 // Conflict Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
 // сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Conflict = Problem
 
-// NotFound Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type NotFound = Problem
+// NotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type NotFound = ProblemBase
 
 // ListMenuParams defines parameters for ListMenu.
 type ListMenuParams struct {

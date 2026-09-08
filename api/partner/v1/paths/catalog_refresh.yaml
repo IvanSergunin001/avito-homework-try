@@ -20,6 +20,6 @@ post:
     '202':
       description: Просьба принята, синхронизация запущена.
     '401':
-      $ref: '../components/responses/Unauthorized.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/Unauthorized'
     '403':
-      $ref: '../components/responses/Forbidden.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/Forbidden'

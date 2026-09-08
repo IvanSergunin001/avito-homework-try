@@ -6,15 +6,15 @@ get:
   tags:
     - catalog
   parameters:
-    - $ref: '../components/parameters/SearchQuery.yaml'
-    - $ref: '../components/parameters/Limit.yaml'
-    - $ref: '../../../common/v1/components/parameters/Offset.yaml'
+    - $ref: '../components/parameters.yaml#/SearchQuery'
+    - $ref: '../components/parameters.yaml#/Limit'
+    - $ref: '../../../common/v1/components/parameters.yaml#/Offset'
   responses:
     '200':
       description: Страница выдачи товаров.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/ProductPage.yaml'
+            $ref: '../components/schemas.yaml#/ProductPage'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'

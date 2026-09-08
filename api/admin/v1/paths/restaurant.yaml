@@ -6,22 +6,22 @@ patch:
   tags:
     - onboarding
   parameters:
-    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
-    - $ref: '../components/parameters/RestaurantId.yaml'
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+    - $ref: '../components/parameters.yaml#/RestaurantId'
   requestBody:
     required: true
     content:
       application/json:
         schema:
-          $ref: '../components/schemas/RestaurantUpdate.yaml'
+          $ref: '../components/schemas.yaml#/RestaurantUpdate'
   responses:
     '200':
       description: Реквизиты обновлены.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Restaurant.yaml'
+            $ref: '../components/schemas.yaml#/Restaurant'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '404':
-      $ref: '../components/responses/NotFound.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

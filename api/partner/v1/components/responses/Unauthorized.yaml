@@ -1,6 +1,0 @@
-description: |
-  Партнёрский ключ не передан или неизвестен: `code` = `unauthorized`.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

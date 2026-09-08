@@ -4,15 +4,15 @@ get:
   tags:
     - catalog
   parameters:
-    - $ref: '../components/parameters/RestaurantId.yaml'
+    - $ref: '../components/parameters.yaml#/RestaurantId'
   responses:
     '200':
       description: Заведение.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Restaurant.yaml'
+            $ref: '../components/schemas.yaml#/Restaurant'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '404':
-      $ref: '../components/responses/NotFound.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

@@ -7,16 +7,16 @@ get:
   tags:
     - orders
   parameters:
-    - $ref: '../components/parameters/OrderId.yaml'
-    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
+    - $ref: '../components/parameters.yaml#/OrderId'
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
   responses:
     '200':
       description: Заказ.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Order.yaml'
+            $ref: '../components/schemas.yaml#/Order'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '404':
-      $ref: '../components/responses/NotFound.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

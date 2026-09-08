@@ -1,0 +1,10 @@
+# Отказы, специфичные для админского API. Одинаковые для всех API (400, 404) —
+# в `api/common/v1`.
+
+Conflict:
+  description: |
+    Заказ уже в терминальном статусе: отменять нечего, `code` = `order_not_cancellable`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/Problem'

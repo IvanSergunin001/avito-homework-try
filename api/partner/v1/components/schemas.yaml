@@ -1,0 +1,235 @@
+# Схемы партнёрского контракта — обе стороны интеграции в одном документе. Общие с
+# другими API схемы подключаются из `api/common/v1`.
+
+CancellationRequest:
+  type: object
+  description: Просьба площадки отменить принятый заказ.
+  properties:
+    reason:
+      type: string
+      maxLength: 500
+      description: Причина отмены для оператора заведения.
+      example: Отмена по просьбе покупателя
+
+IncomingOrder:
+  type: object
+  description: |
+    Заказ, переданный площадкой заведению. `order_id` — идентификатор заказа на площадке;
+    он же приходит в заголовке `Idempotency-Key`, по нему заведение узнаёт повтор.
+  required:
+    - order_id
+    - address
+    - items
+    - total
+  properties:
+    order_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    address:
+      type: string
+      minLength: 1
+      maxLength: 500
+      description: Адрес доставки в свободной форме.
+      example: Москва, Лесная 7, кв. 12
+    items:
+      type: array
+      minItems: 1
+      maxItems: 100
+      items:
+        $ref: '#/IncomingOrderItem'
+    total:
+      allOf:
+        - $ref: '../../../common/v1/components/schemas.yaml#/Money'
+      description: Сумма, посчитанная площадкой. Заведение сверяет её со своим расчётом.
+    placed_at:
+      type: string
+      format: date-time
+      description: Когда покупатель оформил заказ.
+
+IncomingOrderItem:
+  type: object
+  description: |
+    Позиция передаваемого заказа. Цена — та, по которой площадка показала позицию
+    покупателю: заведение сверяет её со своей и при расхождении отказывает кодом
+    `price_changed`, сообщая актуальную цену.
+  required:
+    - external_id
+    - quantity
+    - price
+  properties:
+    external_id:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: croissant-almond
+    quantity:
+      $ref: '../../../common/v1/components/schemas.yaml#/Quantity'
+    price:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+
+MenuItem:
+  type: object
+  description: |
+    Позиция меню заведения. `external_id` — идентификатор в системе заведения; площадка
+    обновляет каталог по паре «заведение + `external_id`», поэтому он обязан быть
+    стабильным во времени. Позиция, исчезнувшая из выдачи, деактивируется на витрине.
+  required:
+    - external_id
+    - name
+    - price
+    - is_available
+  properties:
+    external_id:
+      type: string
+      minLength: 1
+      maxLength: 200
+      description: Идентификатор позиции в системе заведения. Стабилен между выгрузками.
+      example: croissant-almond
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Круассан с миндалём
+    description:
+      type: string
+      maxLength: 2000
+      example: Слоёное тесто, миндальный крем
+    price:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+    is_available:
+      type: boolean
+      description: |
+        Ложь — позиция в стоп-листе: она видна покупателю, но заказать её нельзя.
+      example: true
+
+MenuPage:
+  type: object
+  description: Страница меню заведения.
+  required:
+    - items
+    - page
+  properties:
+    items:
+      type: array
+      items:
+        $ref: '#/MenuItem'
+    page:
+      $ref: '../../../common/v1/components/schemas.yaml#/PageMeta'
+
+NotifiedStatus:
+  type: string
+  description: |
+    Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
+    перечень не входят: их ставит сама площадка — при создании заказа и по успешному
+    синхронному ответу на приём заказа.
+  enum:
+    - confirmed
+    - cooking
+    - delivering
+    - completed
+    - cancelled
+  example: cooking
+
+OrderAcceptance:
+  type: object
+  description: |
+    Подтверждение того, что заведение приняло заказ на рассмотрение. Площадка переводит
+    заказ в `under_review` и дальше ждёт уведомлений о статусах.
+  required:
+    - order_id
+    - accepted_at
+  properties:
+    order_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    accepted_at:
+      type: string
+      format: date-time
+
+OrderCancellation:
+  type: object
+  description: Подтверждение отмены заказа заведением.
+  required:
+    - order_id
+    - cancelled_at
+  properties:
+    order_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    cancelled_at:
+      type: string
+      format: date-time
+
+OrderStatusState:
+  type: object
+  description: Статус заказа на площадке после применения уведомления.
+  required:
+    - order_id
+    - status
+  properties:
+    order_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    status:
+      type: string
+      description: Действующий статус заказа. Может отличаться от присланного, если уведомление опоздало.
+      enum:
+        - pending
+        - under_review
+        - confirmed
+        - cooking
+        - delivering
+        - completed
+        - cancelled
+      example: cooking
+
+Problem:
+  description: |
+    Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+    сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
+  allOf:
+    - $ref: '../../../common/v1/components/schemas.yaml#/ProblemBase'
+    - type: object
+      properties:
+        product_external_id:
+          type: string
+          maxLength: 200
+          description: |
+            Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
+            `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
+          example: croissant-almond
+        current_price:
+          allOf:
+            - $ref: '../../../common/v1/components/schemas.yaml#/Money'
+          description: |
+            Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
+            площадка внеочередно обновляет каталог и показывает покупателю новую цену.
+
+StatusNotification:
+  type: object
+  description: |
+    Уведомление о смене статуса заказа. Приём идемпотентен: переходы монотонны, поэтому
+    повторное уведомление о том же статусе и уведомление о более раннем статусе после
+    более позднего принимаются и ничего не меняют — это и есть защита от ретраев.
+    Уведомление о заказе в терминальном статусе тоже принимается и ничего не меняет.
+  required:
+    - status
+    - occurred_at
+  properties:
+    status:
+      $ref: '#/NotifiedStatus'
+    occurred_at:
+      type: string
+      format: date-time
+      description: |
+        Когда статус сменился у заведения. По нему площадка отличает запоздавшее
+        уведомление от свежего.
+    reason:
+      type: string
+      maxLength: 500
+      description: Причина, если заведение отменило заказ. Показывается покупателю.
+      example: Закончились продукты

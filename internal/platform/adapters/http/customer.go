@@ -119,12 +119,13 @@ func (customerAPI) ListRestaurantProducts(
 	return nil, httpx.ErrNotImplemented
 }
 
-// customerValidationProblem собирает отказ по неверному запросу в схеме клиентского API:
-// тип сгенерирован по ней же, поэтому тело ответа не может разойтись с контрактом.
-func customerValidationProblem(err error) customer_v1.Problem {
+// customerValidationProblem собирает отказ по неверному запросу. Тело — общая основа
+// `problem+json`: своих полей клиентскому API на `400` добавить нечего, и тип
+// сгенерирован по спецификации, поэтому ответ не может разойтись с контрактом.
+func customerValidationProblem(err error) customer_v1.ProblemBase {
 	detail := err.Error()
 
-	return customer_v1.Problem{
+	return customer_v1.ProblemBase{
 		Type:   problem.DefaultType,
 		Title:  "Некорректные параметры запроса",
 		Status: http.StatusBadRequest,
@@ -150,7 +151,7 @@ func writeCustomerResponseProblem(w http.ResponseWriter, r *http.Request, err er
 	}
 
 	detail := err.Error()
-	problem.Write(r.Context(), w, status, customer_v1.Problem{
+	problem.Write(r.Context(), w, status, customer_v1.ProblemBase{
 		Type:   problem.DefaultType,
 		Title:  title,
 		Status: status,

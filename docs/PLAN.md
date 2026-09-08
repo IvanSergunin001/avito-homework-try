@@ -64,7 +64,7 @@ cmd/platform, cmd/restaurant
 internal/platform/{domain, application, adapters/{http, postgres, restaurant_client}, migrations}
 internal/restaurant/{domain, application, adapters/{http, postgres, platform_client}, migrations}
 internal/pkg/{config, problem, logger, spec, testdb}
-api/{customer,partner,admin,operator,common}/v1/{openapi.yaml, components/*.yaml, bundle.yaml, codegen-*.yaml}
+api/{customer,partner,admin,operator,common}/v1/{openapi.yaml, paths/*.yaml, components/{schemas,parameters,responses}.yaml, bundle.yaml, codegen-*.yaml}
 api/{customer,partner}/v1/client.gen.go   api/go.mod
 docs/{PLAN.md, TASK.md, adr, puml, img}
 compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
@@ -82,13 +82,23 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 самостоятельный Go-модуль (`github.com/IvanSergunin001/Test157/api` со своим `go.mod`), чтобы стороннее
 заведение импортировало клиент контракта, не утаскивая за собой службы площадки.
 
-Источник разбит на несколько файлов через `$ref` (пути, схемы, общие ответы), перед генерацией собирается в
+Источник разбит на несколько файлов через `$ref`, перед генерацией собирается в
 один `bundle.yaml`, который коммитится и служит артефактом для партнёров — так генерация не зависит от того,
 как кодогенератор разрешает внешние ссылки.
 
-Общие схемы (основа `Problem`, список кодов, страница выдачи, деньги, количество, инициатор отмены) и общие
-параметры (`User-Id`, `offset`, заголовки идемпотентности) не дублируются, а лежат в
-`api/common/v1/components/` и подключаются `$ref`'ом из всех спек. Своё поле документ добавляет к общей
+Гранулярность источника — файл на вид: путь отдельным файлом (`paths/orders.yaml`), а компоненты тремя
+файлами на документ (`components/schemas.yaml`, `parameters.yaml`, `responses.yaml`). Файл на компонент —
+конвенция Redocly — даёт полсотни файлов по десять строк на документ: чтобы прочитать схему заказа целиком,
+приходится обойти пять файлов, а `$ref` между соседями пишется как путь к файлу. Одним `components.yaml` на
+документ мельчить перестаёшь, но схемы, параметры и ответы съезжаются в один длинный файл, который правят
+разные задачи. Пути остаются по файлу: путь — единица правки (ручку добавляют и удаляют целиком), а
+компоненты — словарь, который читают целиком.
+
+Общие схемы (основа `Problem`, список кодов, страница выдачи, деньги, количество, инициатор отмены), общие
+параметры (`User-Id`, `offset`, заголовки идемпотентности) и общие ответы (400, 401, 403, 404) не
+дублируются, а лежат в `api/common/v1/components/` и подключаются `$ref`'ом из всех спек. Общий ответ несёт
+общую основу `ProblemBase`: у этих кодов документу нечего добавить сверх неё. Отказ по правилам предметной
+области (409 и его соседи) остаётся у документа — там в теле нужны позиция и цена, то есть свой `Problem`. Своё поле документ добавляет к общей
 основе через `allOf` — так `Problem` клиентского API несёт `product_id`, не заводя второй копии RFC-схемы.
 Потолок страницы общим не стал: у витрины и у меню он разный, и параметр `limit` каждый документ объявляет
 сам. Самодостаточность публикуемого артефакта от этого не страдает: наружу
@@ -269,7 +279,7 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 | `internal_error` | необработанный отказ службы | 500 |
 | `restaurant_unavailable` | заведение недоступно или не ответило вовремя | 502/504 |
 
-Перечень живёт одним `enum`'ом в `api/common/v1/components/schemas/ProblemCode.yaml` и оттуда попадает в
+Перечень живёт одним `enum`'ом в `api/common/v1/components/schemas.yaml` и оттуда попадает в
 сгенерированный код всех трёх документов; доменные константы обоих контекстов сверяются с ним тестом.
 Второго списка кодов нет намеренно — два списка разъезжаются, и один и тот же отказ начинает называться
 по-разному у витрины и у интеграции.

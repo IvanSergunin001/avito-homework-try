@@ -4,15 +4,15 @@ get:
   tags:
     - catalog
   parameters:
-    - $ref: '../components/parameters/ProductId.yaml'
+    - $ref: '../components/parameters.yaml#/ProductId'
   responses:
     '200':
       description: Товар.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Product.yaml'
+            $ref: '../components/schemas.yaml#/Product'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '404':
-      $ref: '../components/responses/NotFound.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

@@ -1,0 +1,250 @@
+# Схемы клиентского API. Общие с другими API — деньги, страница выдачи, основа отказа —
+# подключаются из `api/common/v1`.
+
+NewOrder:
+  type: object
+  description: |
+    Оформление заказа. `order_id` генерирует клиент в формате uuid v7; он же — ключ
+    идемпотентности (README, «Оформление заказа»).
+  required:
+    - order_id
+    - restaurant_id
+    - address
+    - items
+  properties:
+    order_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    restaurant_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    address:
+      type: string
+      minLength: 1
+      maxLength: 500
+      example: Москва, Лесная 7, кв. 12
+    items:
+      type: array
+      minItems: 1
+      maxItems: 100
+      items:
+        $ref: '#/NewOrderItem'
+
+NewOrderItem:
+  type: object
+  description: Позиция оформляемого заказа. Цену клиент не присылает — её знает площадка.
+  required:
+    - product_id
+    - quantity
+  properties:
+    product_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+    quantity:
+      $ref: '../../../common/v1/components/schemas.yaml#/Quantity'
+
+Order:
+  type: object
+  description: |
+    Заказ покупателя. Сумма считается площадкой по ценам заведения — клиентскому расчёту
+    площадка не верит.
+  required:
+    - id
+    - customer_id
+    - restaurant_id
+    - status
+    - address
+    - items
+    - total
+    - created_at
+    - updated_at
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Идентификатор заказа, сгенерированный клиентом (uuid v7).
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    customer_id:
+      type: string
+      format: uuid
+      description: Покупатель из заголовка `User-Id`.
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+    restaurant_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    status:
+      $ref: '#/OrderStatus'
+    address:
+      type: string
+      minLength: 1
+      maxLength: 500
+      description: Адрес доставки в свободной форме.
+      example: Москва, Лесная 7, кв. 12
+    items:
+      type: array
+      minItems: 1
+      items:
+        $ref: '#/OrderItem'
+    total:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+    cancelled_by:
+      $ref: '../../../common/v1/components/schemas.yaml#/CancelledBy'
+    cancellation_reason:
+      type: string
+      maxLength: 500
+      description: Причина отмены. Заполняется, когда заказ отменён заведением через саппорт.
+      example: Закончились продукты
+    created_at:
+      type: string
+      format: date-time
+    updated_at:
+      type: string
+      format: date-time
+
+OrderItem:
+  type: object
+  description: |
+    Позиция заказа. Название и цена — снимок на момент оформления: обновление каталога
+    не должно переписывать историю покупателя задним числом.
+  required:
+    - product_id
+    - name
+    - price
+    - quantity
+  properties:
+    product_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+    name:
+      type: string
+      example: Круассан с миндалём
+    price:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+    quantity:
+      $ref: '../../../common/v1/components/schemas.yaml#/Quantity'
+
+OrderStatus:
+  type: string
+  description: |
+    Статус заказа. Нетерминальные: `pending`, `under_review`, `confirmed`, `cooking`,
+    `delivering`; терминальные: `completed`, `cancelled` — переходов из них нет.
+
+    `pending` ставит площадка при создании заказа, `under_review` — успешный синхронный
+    ответ заведения, дальнейшие переходы приходят уведомлениями от заведения.
+  enum:
+    - pending
+    - under_review
+    - confirmed
+    - cooking
+    - delivering
+    - completed
+    - cancelled
+  example: under_review
+
+Problem:
+  description: |
+    Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
+    только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
+  allOf:
+    - $ref: '../../../common/v1/components/schemas.yaml#/ProblemBase'
+    - type: object
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: |
+            Товар, из-за которого отказан заказ. Приходит с кодами `out_of_stock`,
+            `price_changed` и `unknown_product` — клиенту нужно знать, какую позицию править.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+        current_price:
+          allOf:
+            - $ref: '../../../common/v1/components/schemas.yaml#/Money'
+          description: |
+            Актуальная цена товара по данным заведения. Приходит с кодом `price_changed`,
+            чтобы клиент показал новую цену, а не отправлял покупателя пересобирать корзину.
+
+Product:
+  type: object
+  description: |
+    Позиция меню в витрине площадки. `is_available` — стоп-лист заведения: товар виден,
+    но заказать его нельзя, иначе покупатель искал бы исчезнувшее блюдо.
+  required:
+    - id
+    - restaurant_id
+    - name
+    - price
+    - is_available
+  properties:
+    id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+    restaurant_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Круассан с миндалём
+    description:
+      type: string
+      maxLength: 2000
+      example: Слоёное тесто, миндальный крем
+    price:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+    is_available:
+      type: boolean
+      description: Ложь — товар в стоп-листе заведения.
+      example: true
+
+ProductPage:
+  type: object
+  description: Страница выдачи товаров — меню заведения или результат поиска.
+  required:
+    - items
+    - page
+  properties:
+    items:
+      type: array
+      items:
+        $ref: '#/Product'
+    page:
+      $ref: '../../../common/v1/components/schemas.yaml#/PageMeta'
+
+Restaurant:
+  type: object
+  description: Заведение в витрине покупателя. Закрытые заведения в выдачу не попадают.
+  required:
+    - id
+    - name
+  properties:
+    id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Пекарня «Батон»
+
+RestaurantPage:
+  type: object
+  description: Страница списка заведений.
+  required:
+    - items
+    - page
+  properties:
+    items:
+      type: array
+      items:
+        $ref: '#/Restaurant'
+    page:
+      $ref: '../../../common/v1/components/schemas.yaml#/PageMeta'

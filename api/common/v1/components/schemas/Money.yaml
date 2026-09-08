@@ -1,5 +1,0 @@
-type: integer
-format: int64
-minimum: 0
-description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
-example: 45000

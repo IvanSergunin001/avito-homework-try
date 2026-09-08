@@ -1,6 +1,0 @@
-description: |
-  Ключ принадлежит другому заведению, чем то, о ресурсе которого запрос: `code` = `forbidden`.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

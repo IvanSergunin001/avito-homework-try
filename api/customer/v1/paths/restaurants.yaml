@@ -7,14 +7,14 @@ get:
   tags:
     - catalog
   parameters:
-    - $ref: '../components/parameters/Limit.yaml'
-    - $ref: '../../../common/v1/components/parameters/Offset.yaml'
+    - $ref: '../components/parameters.yaml#/Limit'
+    - $ref: '../../../common/v1/components/parameters.yaml#/Offset'
   responses:
     '200':
       description: Страница списка заведений.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/RestaurantPage.yaml'
+            $ref: '../components/schemas.yaml#/RestaurantPage'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'

@@ -7,19 +7,19 @@ post:
   tags:
     - onboarding
   parameters:
-    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
   requestBody:
     required: true
     content:
       application/json:
         schema:
-          $ref: '../components/schemas/NewRestaurant.yaml'
+          $ref: '../components/schemas.yaml#/NewRestaurant'
   responses:
     '201':
       description: Заведение зарегистрировано, ключ выдан.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/RegisteredRestaurant.yaml'
+            $ref: '../components/schemas.yaml#/RegisteredRestaurant'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'

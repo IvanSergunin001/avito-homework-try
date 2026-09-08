@@ -1,5 +1,0 @@
-description: |
-  Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
-  инструменту саппорта хватает кода причины и текста.
-allOf:
-  - $ref: '../../../../common/v1/components/schemas/ProblemBase.yaml'

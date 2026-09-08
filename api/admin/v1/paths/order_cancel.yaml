@@ -11,24 +11,24 @@ post:
   tags:
     - support
   parameters:
-    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
-    - $ref: '../components/parameters/OrderId.yaml'
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+    - $ref: '../components/parameters.yaml#/OrderId'
   requestBody:
     required: true
     content:
       application/json:
         schema:
-          $ref: '../components/schemas/SupportCancellation.yaml'
+          $ref: '../components/schemas.yaml#/SupportCancellation'
   responses:
     '200':
       description: Заказ отменён саппортом.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Order.yaml'
+            $ref: '../components/schemas.yaml#/Order'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '404':
-      $ref: '../components/responses/NotFound.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'
     '409':
-      $ref: '../components/responses/Conflict.yaml'
+      $ref: '../components/responses.yaml#/Conflict'

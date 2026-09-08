@@ -430,27 +430,6 @@ components:
       minimum: 0
       description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
       example: 45000
-    Problem:
-      description: |
-        Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
-        только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
-      allOf:
-        - $ref: '#/components/schemas/ProblemBase'
-        - type: object
-          properties:
-            product_id:
-              type: string
-              format: uuid
-              description: |
-                Товар, из-за которого отказан заказ. Приходит с кодами `out_of_stock`,
-                `price_changed` и `unknown_product` — клиенту нужно знать, какую позицию править.
-              example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
-            current_price:
-              allOf:
-                - $ref: '#/components/schemas/Money'
-              description: |
-                Актуальная цена товара по данным заведения. Приходит с кодом `price_changed`,
-                чтобы клиент показал новую цену, а не отправлял покупателя пересобирать корзину.
     Product:
       type: object
       description: |
@@ -655,6 +634,27 @@ components:
         updated_at:
           type: string
           format: date-time
+    Problem:
+      description: |
+        Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
+        только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
+        - type: object
+          properties:
+            product_id:
+              type: string
+              format: uuid
+              description: |
+                Товар, из-за которого отказан заказ. Приходит с кодами `out_of_stock`,
+                `price_changed` и `unknown_product` — клиенту нужно знать, какую позицию править.
+              example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+            current_price:
+              allOf:
+                - $ref: '#/components/schemas/Money'
+              description: |
+                Актуальная цена товара по данным заведения. Приходит с кодом `price_changed`,
+                чтобы клиент показал новую цену, а не отправлял покупателя пересобирать корзину.
   responses:
     BadRequest:
       description: |
@@ -662,14 +662,14 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     NotFound:
       description: |
-        Сущности нет или она недоступна покупателю.
+        Ресурса с таким идентификатором нет или он недоступен обратившемуся.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     Conflict:
       description: |
         Отказ по правилам предметной области: закончился товар, изменилась цена, заказ уже нельзя отменить.

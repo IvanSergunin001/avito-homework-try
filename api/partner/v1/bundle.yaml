@@ -420,27 +420,6 @@ components:
             когда по отказу нужно будет попадать в журнал или в обращение поддержки.
         code:
           $ref: '#/components/schemas/ProblemCode'
-    Problem:
-      description: |
-        Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-        сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-      allOf:
-        - $ref: '#/components/schemas/ProblemBase'
-        - type: object
-          properties:
-            product_external_id:
-              type: string
-              maxLength: 200
-              description: |
-                Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
-                `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
-              example: croissant-almond
-            current_price:
-              allOf:
-                - $ref: '#/components/schemas/Money'
-              description: |
-                Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
-                площадка внеочередно обновляет каталог и показывает покупателю новую цену.
     Quantity:
       type: integer
       minimum: 1
@@ -518,6 +497,27 @@ components:
         accepted_at:
           type: string
           format: date-time
+    Problem:
+      description: |
+        Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+        сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
+        - type: object
+          properties:
+            product_external_id:
+              type: string
+              maxLength: 200
+              description: |
+                Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
+                `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
+              example: croissant-almond
+            current_price:
+              allOf:
+                - $ref: '#/components/schemas/Money'
+              description: |
+                Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
+                площадка внеочередно обновляет каталог и показывает покупателю новую цену.
     CancellationRequest:
       type: object
       description: Просьба площадки отменить принятый заказ.
@@ -608,7 +608,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     Conflict:
       description: |
         Отказ по правилам предметной области: стоп-лист, изменившаяся цена, неизвестная позиция, закрытое заведение, непозволительная отмена.
@@ -618,22 +618,22 @@ components:
             $ref: '#/components/schemas/Problem'
     NotFound:
       description: |
-        Заказа с таким идентификатором нет.
+        Ресурса с таким идентификатором нет или он недоступен обратившемуся.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     Unauthorized:
       description: |
-        Партнёрский ключ не передан или неизвестен: `code` = `unauthorized`.
+        Обратившийся не опознан: ключ не передан или неизвестен, `code` = `unauthorized`.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     Forbidden:
       description: |
-        Ключ принадлежит другому заведению, чем то, о ресурсе которого запрос: `code` = `forbidden`.
+        Обратившийся опознан, но ресурс не его: `code` = `forbidden`.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'

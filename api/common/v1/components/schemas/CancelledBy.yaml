@@ -1,9 +1,0 @@
-type: string
-description: |
-  Кто отменил заказ. Отмена заведением после начала готовки идёт через саппорт, поэтому
-  `support` — самостоятельное значение, а не разновидность `restaurant`.
-enum:
-  - customer
-  - restaurant
-  - support
-example: customer

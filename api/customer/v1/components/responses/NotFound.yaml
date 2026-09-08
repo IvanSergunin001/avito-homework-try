@@ -1,6 +1,0 @@
-description: |
-  Сущности нет или она недоступна покупателю.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

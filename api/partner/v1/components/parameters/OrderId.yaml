@@ -1,7 +1,0 @@
-name: orderId
-in: path
-required: true
-description: Идентификатор заказа на площадке.
-schema:
-  type: string
-  format: uuid

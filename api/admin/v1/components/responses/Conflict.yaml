@@ -1,6 +1,0 @@
-description: |
-  Заказ уже в терминальном статусе: отменять нечего, `code` = `order_not_cancellable`.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

@@ -442,9 +442,10 @@ type UserId = openapi_types.UUID
 // только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
 type BadGateway = Problem
 
-// BadRequest Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
-// только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
-type BadRequest = Problem
+// BadRequest Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type BadRequest = ProblemBase
 
 // Conflict Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
 // только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
@@ -454,9 +455,10 @@ type Conflict = Problem
 // только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
 type GatewayTimeout = Problem
 
-// NotFound Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
-// только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
-type NotFound = Problem
+// NotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type NotFound = ProblemBase
 
 // UnprocessableEntity Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
 // только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
@@ -1137,13 +1139,13 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 
 type BadGatewayApplicationProblemPlusJSONResponse Problem
 
-type BadRequestApplicationProblemPlusJSONResponse Problem
+type BadRequestApplicationProblemPlusJSONResponse ProblemBase
 
 type ConflictApplicationProblemPlusJSONResponse Problem
 
 type GatewayTimeoutApplicationProblemPlusJSONResponse Problem
 
-type NotFoundApplicationProblemPlusJSONResponse Problem
+type NotFoundApplicationProblemPlusJSONResponse ProblemBase
 
 type UnprocessableEntityApplicationProblemPlusJSONResponse Problem
 

@@ -133,11 +133,6 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Money Сумма в копейках — целое в минорных единицах (почему так, см. README).
-//
-// Example: 45000
-type Money = int64
-
 // NotifiedStatus Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
 // перечень не входят: их ставит сама площадка — при создании заказа и по успешному
 // синхронному ответу на приём заказа.
@@ -160,55 +155,6 @@ type OrderStatusState struct {
 //
 // Example: cooking
 type OrderStatusStateStatus string
-
-// Problem Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type Problem struct {
-	// Code Машиночитаемая причина отказа — единственный список кодов на все API: два списка
-	// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
-	// список — API объявляет и те коды, которых сам не возвращает.
-	//
-	//
-	// Example: validation_failed
-	Code ProblemCode `json:"code"`
-
-	// CurrentPrice Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
-	// площадка внеочередно обновляет каталог и показывает покупателю новую цену.
-	CurrentPrice *Money `json:"current_price,omitempty"`
-
-	// Detail Пояснение для человека, привязанное к конкретному случаю.
-	//
-	// Example: limit: допустимы значения от 1 до 100
-	Detail *string `json:"detail,omitempty"`
-
-	// Instance Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
-	// когда по отказу нужно будет попадать в журнал или в обращение поддержки.
-	Instance *string `json:"instance,omitempty"`
-
-	// ProductExternalId Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
-	// `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
-	//
-	//
-	// Example: croissant-almond
-	ProductExternalId *string `json:"product_external_id,omitempty"`
-
-	// Status Код ответа HTTP, продублированный в теле.
-	//
-	// Example: 400
-	Status int `json:"status"`
-
-	// Title Короткое человекочитаемое название проблемы.
-	//
-	// Example: Некорректный запрос
-	Title string `json:"title"`
-
-	// Type Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
-	// причины нет, идентичность несёт `code`.
-	//
-	//
-	// Example: about:blank
-	Type string `json:"type"`
-}
 
 // ProblemBase Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
 // Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
@@ -282,21 +228,25 @@ type StatusNotification struct {
 // OrderId defines model for OrderId.
 type OrderId = openapi_types.UUID
 
-// BadRequest Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type BadRequest = Problem
+// BadRequest Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type BadRequest = ProblemBase
 
-// Forbidden Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type Forbidden = Problem
+// Forbidden Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type Forbidden = ProblemBase
 
-// NotFound Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type NotFound = Problem
+// NotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type NotFound = ProblemBase
 
-// Unauthorized Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
-// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
-type Unauthorized = Problem
+// Unauthorized Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type Unauthorized = ProblemBase
 
 // NotifyOrderStatusJSONRequestBody defines body for NotifyOrderStatus for application/json ContentType.
 type NotifyOrderStatusJSONRequestBody = StatusNotification
@@ -499,13 +449,13 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	return r
 }
 
-type BadRequestApplicationProblemPlusJSONResponse Problem
+type BadRequestApplicationProblemPlusJSONResponse ProblemBase
 
-type ForbiddenApplicationProblemPlusJSONResponse Problem
+type ForbiddenApplicationProblemPlusJSONResponse ProblemBase
 
-type NotFoundApplicationProblemPlusJSONResponse Problem
+type NotFoundApplicationProblemPlusJSONResponse ProblemBase
 
-type UnauthorizedApplicationProblemPlusJSONResponse Problem
+type UnauthorizedApplicationProblemPlusJSONResponse ProblemBase
 
 type RefreshCatalogRequestObject struct {
 }

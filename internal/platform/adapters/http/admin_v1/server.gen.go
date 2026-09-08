@@ -346,17 +346,19 @@ type RestaurantId = openapi_types.UUID
 // UserId defines model for UserId.
 type UserId = openapi_types.UUID
 
-// BadRequest Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
-// инструменту саппорта хватает кода причины и текста.
-type BadRequest = Problem
+// BadRequest Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type BadRequest = ProblemBase
 
 // Conflict Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
 // инструменту саппорта хватает кода причины и текста.
 type Conflict = Problem
 
-// NotFound Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
-// инструменту саппорта хватает кода причины и текста.
-type NotFound = Problem
+// NotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type NotFound = ProblemBase
 
 // CancelOrderBySupportParams defines parameters for CancelOrderBySupport.
 type CancelOrderBySupportParams struct {
@@ -714,11 +716,11 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	return r
 }
 
-type BadRequestApplicationProblemPlusJSONResponse Problem
+type BadRequestApplicationProblemPlusJSONResponse ProblemBase
 
 type ConflictApplicationProblemPlusJSONResponse Problem
 
-type NotFoundApplicationProblemPlusJSONResponse Problem
+type NotFoundApplicationProblemPlusJSONResponse ProblemBase
 
 type CancelOrderBySupportRequestObject struct {
 	OrderId OrderId `json:"orderId"`

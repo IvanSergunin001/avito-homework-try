@@ -11,28 +11,28 @@ post:
   tags:
     - restaurant
   parameters:
-    - $ref: '../../../common/v1/components/parameters/IdempotencyKey.yaml'
-    - $ref: '../../../common/v1/components/parameters/IdempotencyAttempt.yaml'
+    - $ref: '../../../common/v1/components/parameters.yaml#/IdempotencyKey'
+    - $ref: '../../../common/v1/components/parameters.yaml#/IdempotencyAttempt'
   requestBody:
     required: true
     content:
       application/json:
         schema:
-          $ref: '../components/schemas/IncomingOrder.yaml'
+          $ref: '../components/schemas.yaml#/IncomingOrder'
   responses:
     '201':
       description: Заказ принят на рассмотрение.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/OrderAcceptance.yaml'
+            $ref: '../components/schemas.yaml#/OrderAcceptance'
     '200':
       description: Заказ с этим ключом идемпотентности уже принят — отдаём результат первой попытки.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/OrderAcceptance.yaml'
+            $ref: '../components/schemas.yaml#/OrderAcceptance'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '409':
-      $ref: '../components/responses/Conflict.yaml'
+      $ref: '../components/responses.yaml#/Conflict'

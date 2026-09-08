@@ -263,12 +263,6 @@ components:
             когда по отказу нужно будет попадать в журнал или в обращение поддержки.
         code:
           $ref: '#/components/schemas/ProblemCode'
-    Problem:
-      description: |
-        Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
-        инструменту саппорта хватает кода причины и текста.
-      allOf:
-        - $ref: '#/components/schemas/ProblemBase'
     RestaurantUpdate:
       type: object
       description: |
@@ -446,6 +440,12 @@ components:
         updated_at:
           type: string
           format: date-time
+    Problem:
+      description: |
+        Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+        инструменту саппорта хватает кода причины и текста.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
   responses:
     BadRequest:
       description: |
@@ -453,14 +453,14 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     NotFound:
       description: |
-        Сущности с таким идентификатором нет.
+        Ресурса с таким идентификатором нет или он недоступен обратившемуся.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/Problem'
+            $ref: '#/components/schemas/ProblemBase'
     Conflict:
       description: |
         Заказ уже в терминальном статусе: отменять нечего, `code` = `order_not_cancellable`.

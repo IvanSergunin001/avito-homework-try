@@ -11,35 +11,35 @@ post:
   tags:
     - orders
   parameters:
-    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
   requestBody:
     required: true
     content:
       application/json:
         schema:
-          $ref: '../components/schemas/NewOrder.yaml'
+          $ref: '../components/schemas.yaml#/NewOrder'
   responses:
     '201':
       description: Заказ создан и принят заведением на рассмотрение.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Order.yaml'
+            $ref: '../components/schemas.yaml#/Order'
     '200':
       description: Заказ с таким `order_id` и тем же составом уже был создан — отдаём его.
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Order.yaml'
+            $ref: '../components/schemas.yaml#/Order'
     '400':
-      $ref: '../components/responses/BadRequest.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
     '404':
-      $ref: '../components/responses/NotFound.yaml'
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'
     '409':
-      $ref: '../components/responses/Conflict.yaml'
+      $ref: '../components/responses.yaml#/Conflict'
     '422':
-      $ref: '../components/responses/UnprocessableEntity.yaml'
+      $ref: '../components/responses.yaml#/UnprocessableEntity'
     '502':
-      $ref: '../components/responses/BadGateway.yaml'
+      $ref: '../components/responses.yaml#/BadGateway'
     '504':
-      $ref: '../components/responses/GatewayTimeout.yaml'
+      $ref: '../components/responses.yaml#/GatewayTimeout'

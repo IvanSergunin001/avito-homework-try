@@ -1,6 +1,0 @@
-description: |
-  Отказ по правилам предметной области: закончился товар, изменилась цена, заказ уже нельзя отменить.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

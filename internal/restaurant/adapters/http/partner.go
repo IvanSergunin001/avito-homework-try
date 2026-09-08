@@ -88,13 +88,13 @@ func (partnerAPI) CancelAcceptedOrder(
 	return nil, httpx.ErrNotImplemented
 }
 
-// partnerValidationProblem собирает отказ по неверному запросу в схеме партнёрского
-// контракта: тип сгенерирован по нему же, поэтому тело ответа не может разойтись с тем,
-// что обещано заведению.
-func partnerValidationProblem(err error) partner_v1.Problem {
+// partnerValidationProblem собирает отказ по неверному запросу. Тело — общая основа
+// `problem+json`: своих полей контракту на `400` добавить нечего, и тип сгенерирован по
+// спецификации, поэтому ответ не может разойтись с тем, что обещано заведению.
+func partnerValidationProblem(err error) partner_v1.ProblemBase {
 	detail := err.Error()
 
-	return partner_v1.Problem{
+	return partner_v1.ProblemBase{
 		Type:   problem.DefaultType,
 		Title:  "Некорректные параметры запроса",
 		Status: http.StatusBadRequest,
@@ -120,7 +120,7 @@ func writePartnerResponseProblem(w http.ResponseWriter, r *http.Request, err err
 	}
 
 	detail := err.Error()
-	problem.Write(r.Context(), w, status, partner_v1.Problem{
+	problem.Write(r.Context(), w, status, partner_v1.ProblemBase{
 		Type:   problem.DefaultType,
 		Title:  title,
 		Status: status,

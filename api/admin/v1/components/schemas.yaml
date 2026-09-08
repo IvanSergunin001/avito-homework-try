@@ -1,0 +1,220 @@
+# Схемы админского API. Общие с другими API схемы подключаются из `api/common/v1`.
+
+NewRestaurant:
+  type: object
+  description: Регистрация заведения.
+  required:
+    - name
+    - base_url
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Пекарня «Батон»
+    base_url:
+      type: string
+      format: uri
+      maxLength: 500
+      description: Базовый адрес заведения, к которому площадка добавляет пути партнёрского контракта.
+      example: https://baton.example.org
+
+Order:
+  type: object
+  description: Заказ глазами саппорта.
+  required:
+    - id
+    - customer_id
+    - restaurant_id
+    - status
+    - address
+    - items
+    - total
+    - created_at
+    - updated_at
+  properties:
+    id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    customer_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+    restaurant_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    status:
+      $ref: '#/OrderStatus'
+    address:
+      type: string
+      example: Москва, Лесная 7, кв. 12
+    items:
+      type: array
+      minItems: 1
+      items:
+        $ref: '#/OrderItem'
+    total:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+    cancelled_by:
+      $ref: '../../../common/v1/components/schemas.yaml#/CancelledBy'
+    cancellation_reason:
+      type: string
+      maxLength: 500
+      example: Закончились продукты
+    created_at:
+      type: string
+      format: date-time
+    updated_at:
+      type: string
+      format: date-time
+
+OrderItem:
+  type: object
+  description: Позиция заказа снимком на момент оформления.
+  required:
+    - product_id
+    - name
+    - price
+    - quantity
+  properties:
+    product_id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+    name:
+      type: string
+      example: Круассан с миндалём
+    price:
+      $ref: '../../../common/v1/components/schemas.yaml#/Money'
+    quantity:
+      $ref: '../../../common/v1/components/schemas.yaml#/Quantity'
+
+OrderStatus:
+  type: string
+  description: |
+    Статус заказа. Нетерминальные: `pending`, `under_review`, `confirmed`, `cooking`,
+    `delivering`; терминальные: `completed`, `cancelled` — переходов из них нет.
+  enum:
+    - pending
+    - under_review
+    - confirmed
+    - cooking
+    - delivering
+    - completed
+    - cancelled
+  example: cooking
+
+Problem:
+  description: |
+    Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+    инструменту саппорта хватает кода причины и текста.
+  allOf:
+    - $ref: '../../../common/v1/components/schemas.yaml#/ProblemBase'
+
+RegisteredRestaurant:
+  type: object
+  description: |
+    Только что зарегистрированное заведение вместе с партнёрским ключом. Ключ показывается
+    один раз: площадка хранит только его хеш и восстановить его не сможет — потерянный ключ
+    перевыпускается.
+  required:
+    - id
+    - name
+    - base_url
+    - is_active
+    - partner_key
+  properties:
+    id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    name:
+      type: string
+      example: Пекарня «Батон»
+    base_url:
+      type: string
+      format: uri
+      example: https://baton.example.org
+    is_active:
+      type: boolean
+      example: true
+    partner_key:
+      type: string
+      description: Партнёрский ключ для заголовка `Authorization` партнёрского API.
+      example: pk_018f2b5c1f4a7c3e9a102b8f5d7c1a01
+
+Restaurant:
+  type: object
+  description: Заведение глазами администратора площадки — с реквизитами интеграции.
+  required:
+    - id
+    - name
+    - base_url
+    - is_active
+    - created_at
+    - updated_at
+  properties:
+    id:
+      type: string
+      format: uuid
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+    name:
+      type: string
+      example: Пекарня «Батон»
+    base_url:
+      type: string
+      format: uri
+      example: https://baton.example.org
+    is_active:
+      type: boolean
+      description: Ложь — заведение не показывается покупателю и его меню не синхронизируется.
+      example: true
+    last_synced_at:
+      type: string
+      format: date-time
+      description: Когда каталог заведения синхронизировался последний раз.
+    created_at:
+      type: string
+      format: date-time
+      description: Когда заведение зарегистрировали на площадке.
+    updated_at:
+      type: string
+      format: date-time
+      description: Когда его реквизиты правили последний раз.
+
+RestaurantUpdate:
+  type: object
+  description: |
+    Правка реквизитов заведения: применяются только переданные поля, остальные остаются как
+    были. Пустое тело — не ошибка, а отсутствие изменений.
+  minProperties: 1
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Пекарня «Батон»
+    base_url:
+      type: string
+      format: uri
+      maxLength: 500
+      example: https://baton.example.org
+    is_active:
+      type: boolean
+      example: true
+
+SupportCancellation:
+  type: object
+  description: |
+    Отмена заказа саппортом. Причина обязательна: заказ отменяется уже после списания
+    продуктов, её видит покупатель, и по ней же разбираются злоупотребления.
+  required:
+    - reason
+  properties:
+    reason:
+      type: string
+      minLength: 1
+      maxLength: 500
+      example: Заведение сообщило, что закончились продукты
