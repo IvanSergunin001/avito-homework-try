@@ -13,6 +13,7 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx/problem"
 	"github.com/IvanSergunin001/Test157/internal/platform/adapters/http/partner_v1"
 	"github.com/IvanSergunin001/Test157/internal/platform/application"
+	"github.com/IvanSergunin001/Test157/internal/platform/domain"
 )
 
 // PartnerAPIPrefix — префикс партнёрского API площадки: та половина контракта, которую
@@ -28,15 +29,19 @@ const PartnerAPIPrefix = "/api/kitchen/v1/partner"
 // Закрыто API уже сейчас: защита не приделывается к готовым ручкам задним числом — так и
 // появляется ручка, которую забыли закрыть.
 type partnerAPI struct {
-	catalog *application.CatalogSync
-	log     *slog.Logger
+	catalog  *application.CatalogSync
+	progress *application.Progress
+	log      *slog.Logger
 }
 
 // mountPartnerAPI монтирует партнёрское API на роутер площадки. Список маршрутов целиком
 // сгенерирован по спецификации: руками он не переписывается и разойтись с контрактом
 // не может.
-func mountPartnerAPI(r chi.Router, access guard, catalog *application.CatalogSync, log *slog.Logger) {
-	api := partnerAPI{catalog: catalog, log: log}
+func mountPartnerAPI(
+	r chi.Router, access guard, catalog *application.CatalogSync,
+	progress *application.Progress, log *slog.Logger,
+) {
+	api := partnerAPI{catalog: catalog, progress: progress, log: log}
 
 	handler := partner_v1.NewStrictHandlerWithOptions(api, nil, partner_v1.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  partnerProblems.BadRequest,
@@ -128,12 +133,138 @@ func (a partnerAPI) RefreshCatalog(
 	return partner_v1.RefreshCatalog202Response{}, nil
 }
 
-// Уведомление о смене статуса заказа описано контрактом, его обработчик подставляется
-// своим этапом.
-func (partnerAPI) NotifyOrderStatus(
-	context.Context, partner_v1.NotifyOrderStatusRequestObject,
+// NotifyOrderStatus принимает уведомление заведения о смене статуса заказа.
+//
+// Так и только так статус заказа двигается после того, как заведение за него взялось:
+// площадка ничего не опрашивает — она узнаёт новости от той стороны, которая их знает.
+//
+// Ответ `200` заведение получает и тогда, когда его уведомление ничего не изменило:
+// повтор, опоздавшее уведомление и уведомление о заказе, который уже прожил свою жизнь,
+// приняты — повторять их незачем. В теле ответа действующий статус заказа, и по нему
+// видно, применилось уведомление или опоздало.
+//
+// Правила переходов здесь не проверяются вовсе: можно ли заказу отсюда туда и вправе ли
+// этого требовать заведение, решает его агрегат — тот же самый, который отвечает на этот
+// вопрос покупателю и саппорту.
+func (a partnerAPI) NotifyOrderStatus(
+	ctx context.Context, request partner_v1.NotifyOrderStatusRequestObject,
 ) (partner_v1.NotifyOrderStatusResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
+	partner, ok := partnerFromContext(ctx)
+	if !ok {
+		// Это ошибка сборки роутера, а не запроса: партнёрская ручка смонтирована в обход
+		// проверки ключа. Заведению она отдаётся как отказ по вине площадки.
+		return nil, errors.New("партнёрская операция выполнена без опознания заведения")
+	}
+
+	notice, err := statusNotice(request.Body)
+	if err != nil {
+		return refusedNotification(http.StatusBadRequest, partner_v1.ProblemCodeValidationFailed,
+			"Некорректное уведомление", err.Error())
+	}
+
+	order, err := a.progress.Notify(ctx, partner, request.OrderId, notice)
+	if err != nil {
+		return a.refusedNotice(ctx, err)
+	}
+
+	return partner_v1.NotifyOrderStatus200JSONResponse{
+		OrderId: order.ID,
+		Status:  partner_v1.OrderStatusStateStatus(order.Status),
+	}, nil
+}
+
+// statusNotice переводит присланное тело в уведомление сценария и заодно проверяет то,
+// чего сгенерированный разбор не проверяет: что обязательные поля контракта заполнены и
+// что состояние — из того перечня, о котором уведомляет заведение.
+//
+// Перечень закрыт самим контрактом, и сверяет его порождённое по контракту перечисление,
+// а не площадка своим списком: `pending` и `under_review` ставит она сама, и уведомление
+// о них — не опоздание, а нарушение контракта.
+func statusNotice(body *partner_v1.NotifyOrderStatusJSONRequestBody) (application.StatusNotice, error) {
+	if body == nil {
+		return application.StatusNotice{}, errors.New("тело запроса обязательно")
+	}
+
+	switch {
+	case !body.Status.Valid():
+		return application.StatusNotice{}, fmt.Errorf(
+			"status: %q — не то состояние, о котором уведомляет заведение", body.Status)
+	case body.OccurredAt.IsZero():
+		// Дальше `occurred_at` никем не проверяется — площадка его только записывает в
+		// лог, — поэтому спросить его больше негде: в домен оно не доезжает.
+		return application.StatusNotice{}, errors.New("occurred_at: обязательно")
+	}
+
+	notice := application.StatusNotice{
+		// Словарь состояний у площадки и у заведения общий — тот, что объявлен
+		// контрактом, — поэтому перевода между ними нет и разойтись им негде.
+		Status:     domain.OrderStatus(body.Status),
+		OccurredAt: body.OccurredAt,
+	}
+	if body.Reason != nil {
+		notice.Reason = *body.Reason
+	}
+
+	return notice, nil
+}
+
+// refusedNotice собирает ответ на непринятое уведомление.
+//
+// Отказ матрицы переходов доезжает заведению как непринятый запрос (`400`), а не как
+// доменный конфликт: уведомление о состоянии, в которое заказ отсюда не переходит, — это
+// расхождение заведения с контрактом, а не спор о судьбе заказа. Из ответа видно, что
+// именно не сошлось: в `detail` — переход, которого потребовали.
+//
+// Заказ чужого заведения неотличим от несуществующего: по разным ответам перебор
+// идентификаторов рассказал бы заведению, какие заказы есть у соседей.
+func (a partnerAPI) refusedNotice(
+	ctx context.Context, err error,
+) (partner_v1.NotifyOrderStatusResponseObject, error) {
+	var (
+		invalid    domain.InvalidOrderError
+		transition domain.OrderTransitionError
+	)
+
+	switch {
+	case errors.Is(err, domain.ErrOrderNotFound):
+		return refusedNotification(http.StatusNotFound, partner_v1.ProblemCodeOrderNotFound,
+			"Заказ не найден", "заказа с таким идентификатором у вас нет")
+	case errors.As(err, &transition):
+		a.log.WarnContext(ctx, "restaurant notified about an impossible transition",
+			slog.Any("error", transition))
+
+		return refusedNotification(http.StatusBadRequest, partner_v1.ProblemCodeValidationFailed,
+			"Недопустимый переход", transition.Error())
+	case errors.As(err, &invalid):
+		return refusedNotification(http.StatusBadRequest, partner_v1.ProblemCodeValidationFailed,
+			"Некорректное уведомление", invalid.Reason)
+	}
+
+	// Всё остальное — отказ по вине площадки: о нём отвечает общая ветка, а разбирается
+	// с ним тот, кто читает лог.
+	return nil, err
+}
+
+// refusedNotification собирает отказ уведомлению тем типом ответа, который разрешён
+// операции контрактом. Кодов у неё немного, и перечислены они здесь целиком: код, которого
+// в контракте нет, этой функцией не собрать — сгенерированные типы держат это правило.
+func refusedNotification(
+	status int, code partner_v1.ProblemCode, title, detail string,
+) (partner_v1.NotifyOrderStatusResponseObject, error) {
+	document := partnerProblemBody(status, code, title, detail)
+
+	switch status {
+	case http.StatusNotFound:
+		return partner_v1.NotifyOrderStatus404ApplicationProblemPlusJSONResponse{
+			NotFoundApplicationProblemPlusJSONResponse: partner_v1.
+				NotFoundApplicationProblemPlusJSONResponse(document),
+		}, nil
+	default:
+		return partner_v1.NotifyOrderStatus400ApplicationProblemPlusJSONResponse{
+			BadRequestApplicationProblemPlusJSONResponse: partner_v1.
+				BadRequestApplicationProblemPlusJSONResponse(document),
+		}, nil
+	}
 }
 
 // refusePartnerAccess отказывает постороннему запросу в схеме партнёрского контракта.
