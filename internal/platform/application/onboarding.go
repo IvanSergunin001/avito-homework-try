@@ -24,6 +24,10 @@ type Partners interface {
 	// FindByKeyHash находит подключённое заведение по хешу его ключа. Если такого нет —
 	// domain.ErrRestaurantNotFound.
 	FindByKeyHash(ctx context.Context, keyHash string) (domain.Partner, error)
+	// Find отдаёт подключённое заведение по идентификатору. Если его нет или оно
+	// отключено — domain.ErrRestaurantNotFound: заведение, которое площадка отключила,
+	// заказов не принимает, а не только исчезает с витрины.
+	Find(ctx context.Context, id uuid.UUID) (domain.Partner, error)
 	// ListActive перечисляет подключённые заведения — те, у которых площадка забирает
 	// меню. Список целиком, без окна выдачи: его читает не человек, а обход
 	// синхронизации, и «страница заведений, которым сегодня не повезло» смысла не имеет.

@@ -46,6 +46,12 @@ type settings struct {
 	// Без таймаута заведение, принявшее соединение и замолчавшее, останавливало бы
 	// синхронизацию всех остальных.
 	CatalogSyncTimeout time.Duration `koanf:"catalog_sync_timeout"`
+
+	// OrderTimeout — сколько площадка ждёт решения заведения по переданному заказу.
+	// Предел короче, чем у выгрузки меню, и это не разные значения одного и того же:
+	// выгрузку никто не ждёт перед экраном, а заказ ждёт человек, и «крутится вечно»
+	// для него хуже внятного отказа.
+	OrderTimeout time.Duration `koanf:"order_timeout"`
 }
 
 func main() {
@@ -60,6 +66,7 @@ func run() error {
 		Config:              config.Default(8080),
 		CatalogSyncInterval: 30 * time.Second,
 		CatalogSyncTimeout:  15 * time.Second,
+		OrderTimeout:        5 * time.Second,
 	}
 	if err := config.Load(envPrefix, &cfg); err != nil {
 		return err
@@ -89,7 +96,10 @@ func run() error {
 	}
 	defer closeQuietly(ctx, log, db)
 
-	router, catalog := platformhttp.NewRouter(log, db, cfg.AdminToken, cfg.CatalogSyncTimeout)
+	router, catalog := platformhttp.NewRouter(log, db, cfg.AdminToken, platformhttp.BoxTimeouts{
+		CatalogSync:    cfg.CatalogSyncTimeout,
+		OrderPlacement: cfg.OrderTimeout,
+	})
 
 	// Каталог площадка забирает сама: заведение не обязано уметь доставлять изменения, а
 	// площадка обязана показывать актуальное меню. Обход идёт рядом со службой и

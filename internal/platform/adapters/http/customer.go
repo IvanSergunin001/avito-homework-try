@@ -46,14 +46,21 @@ type customerAPI struct {
 
 	showcase *application.Showcase
 	catalog  *application.Catalog
+	ordering *application.Ordering
 	log      *slog.Logger
 }
 
 // mountCustomerAPI монтирует клиентскую поверхность на роутер площадки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с контрактом не может.
-func mountCustomerAPI(r chi.Router, showcase *application.Showcase, catalog *application.Catalog, log *slog.Logger) {
-	api := customerAPI{showcase: showcase, catalog: catalog, log: log}
+func mountCustomerAPI(
+	r chi.Router,
+	showcase *application.Showcase,
+	catalog *application.Catalog,
+	ordering *application.Ordering,
+	log *slog.Logger,
+) {
+	api := customerAPI{showcase: showcase, catalog: catalog, ordering: ordering, log: log}
 
 	// Лимит тела вешается на поверхность, а не на весь роутер: отказ отдаётся по схеме
 	// клиентской спецификации, а у партнёрской и админской поверхностей схема своя.

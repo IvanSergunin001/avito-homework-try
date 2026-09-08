@@ -40,10 +40,11 @@ const adminToken = "admin-token-под-тест"
 // заведение по адресу поднятой заглушки — см. `catalog_sync_test.go`.
 const boxAddress = "http://box.test:8081"
 
-// syncTimeout — сколько площадка, поднятая для теста, ждёт заведение, забирая у него
-// меню. Настоящий берётся из конфигурации службы; здесь он такой же по смыслу — предел
-// ожидания стороннего заведения, — но короче, чтобы тест не ждал вместе с ней.
-const syncTimeout = 5 * time.Second
+// boxTimeout — сколько площадка, поднятая для теста, ждёт заведение: и когда забирает у
+// него меню, и когда передаёт ему заказ. Настоящие пределы берутся из конфигурации службы
+// и различаются; здесь они такие же по смыслу — предел ожидания стороннего заведения, —
+// но короче, чтобы тест не ждал вместе с ней.
+const boxTimeout = 5 * time.Second
 
 // platform — площадка, поднятая целиком для одного теста.
 type platform struct {
@@ -63,13 +64,13 @@ type platform struct {
 func newPlatform(t *testing.T) *platform {
 	t.Helper()
 
-	return newPlatformWaitingForBox(t, syncTimeout)
+	return newPlatformWaitingForBox(t, boxTimeout)
 }
 
 // newPlatformWaitingForBox поднимает площадку, которая ждёт ответа заведения не дольше
-// waitForBox. Отдельный помощник нужен ровно одному правилу — «заведение, которое не
-// отвечает, не держит синхронизацию вечно», — и проверять его общим для всех тестов
-// пределом значило бы ждать вместе с площадкой пять секунд на каждом прогоне.
+// waitForBox. Отдельный помощник нужен правилам про молчащее заведение — «оно не держит
+// синхронизацию вечно» и «оно не держит вечно покупателя», — и проверять их общим для
+// всех тестов пределом значило бы ждать вместе с площадкой пять секунд на каждом прогоне.
 func newPlatformWaitingForBox(t *testing.T, waitForBox time.Duration) *platform {
 	t.Helper()
 
@@ -77,7 +78,8 @@ func newPlatformWaitingForBox(t *testing.T, waitForBox time.Duration) *platform 
 
 	// Логи службы в тестах никому не нужны, но middleware, которое их пишет, остаётся
 	// на месте: шов проверяется вместе со всей обвязкой, а не в обход неё.
-	router, _ := platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB, adminToken, waitForBox)
+	router, _ := platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB, adminToken,
+		platformhttp.BoxTimeouts{CatalogSync: waitForBox, OrderPlacement: waitForBox})
 
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
@@ -126,15 +128,23 @@ func (p *platform) do(t *testing.T, method, path, token string, body []byte) res
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
+	return p.send(t, req)
+}
+
+// send выполняет собранный запрос и возвращает прочитанный ответ. Собирают запрос
+// помощники — им и решать, какими заголовками поверхность отличает звонящего.
+func (p *platform) send(t *testing.T, req *http.Request) response {
+	t.Helper()
+
 	resp, err := p.srv.Client().Do(req)
 	if err != nil {
-		t.Fatalf("запрос %s %s: %v", method, path, err)
+		t.Fatalf("запрос %s %s: %v", req.Method, req.URL.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	read, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("прочитать ответ %s %s: %v", method, path, err)
+		t.Fatalf("прочитать ответ %s %s: %v", req.Method, req.URL.Path, err)
 	}
 
 	return response{

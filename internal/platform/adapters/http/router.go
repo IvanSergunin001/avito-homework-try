@@ -25,28 +25,45 @@ import (
 //
 // Поверхностей три: клиентская — открытая, партнёрская и админская — закрытые токеном.
 //
-// syncTimeout — сколько площадка ждёт заведение, забирая у него меню.
+// timeouts — сколько площадка ждёт заведение: отдельно на выгрузку меню и отдельно на
+// переданный заказ.
 //
 // Вместе с роутером наружу отдаётся синхронизация каталога: ту же самую, которую дёргает
 // партнёрская ручка внеочередного обновления, служба ведёт по расписанию. Собирать её
 // второй раз в `cmd` значило бы держать рядом с площадкой её неточную копию — и однажды
 // обнаружить, что фоновая синхронизация ходит в заведение не так, как внеочередная.
 func NewRouter(
-	log *slog.Logger, db *sql.DB, adminToken string, syncTimeout time.Duration,
+	log *slog.Logger, db *sql.DB, adminToken string, timeouts BoxTimeouts,
 ) (*chi.Mux, *application.CatalogSync) {
 	restaurants := postgres.NewRestaurants(db)
+	products := postgres.NewProducts(db)
 	showcase := application.NewShowcase(restaurants)
-	catalog := application.NewCatalog(restaurants, postgres.NewProducts(db))
+	catalog := application.NewCatalog(restaurants, products)
 	onboarding := application.NewOnboarding(restaurants)
 	catalogSync := application.NewCatalogSync(restaurants,
-		restaurant_client.NewMenuSource(syncTimeout), postgres.NewCatalog(db), log)
+		restaurant_client.NewMenuSource(timeouts.CatalogSync), postgres.NewCatalog(db), log)
+	ordering := application.NewOrdering(restaurants, products, postgres.NewOrders(db),
+		restaurant_client.NewOrderIntake(timeouts.OrderPlacement))
 	access := guard{gate: application.NewGatekeeper(restaurants, adminToken), log: log}
 
 	r := httpx.NewRouter(log)
 
-	mountCustomerAPI(r, showcase, catalog, log)
+	mountCustomerAPI(r, showcase, catalog, ordering, log)
 	mountPartnerAPI(r, access, catalogSync, log)
 	mountAdminAPI(r, access, onboarding, log)
 
 	return r, catalogSync
+}
+
+// BoxTimeouts — сколько площадка ждёт коробку заведения.
+//
+// Пределы разные, потому что ждут разного. Выгрузку меню никто не ждёт перед экраном:
+// синхронизация идёт в фоне, и заведению можно дать время. Заказ ждёт человек, и предел
+// ожидания здесь — это то, сколько он смотрит на крутящийся индикатор, прежде чем
+// получить внятный ответ.
+type BoxTimeouts struct {
+	// CatalogSync — сколько ждём страницу меню, забирая каталог заведения.
+	CatalogSync time.Duration
+	// OrderPlacement — сколько ждём решения заведения по переданному заказу.
+	OrderPlacement time.Duration
 }

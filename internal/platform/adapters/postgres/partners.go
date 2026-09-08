@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/IvanSergunin001/Test157/internal/platform/domain"
 )
 
@@ -109,4 +111,26 @@ func (r *Restaurants) ListActive(ctx context.Context) ([]domain.Partner, error) 
 	}
 
 	return partners, nil
+}
+
+// Find отдаёт подключённое заведение по идентификатору.
+//
+// Отбор по `is_active` стоит в самом запросе по той же причине, по которой он стоит в
+// поиске по ключу: отключённое заведение перестаёт быть партнёром площадки целиком —
+// заказы ему не передаются, а не только карточка пропадает с витрины.
+func (r *Restaurants) Find(ctx context.Context, id uuid.UUID) (domain.Partner, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, name, base_url, is_active
+		FROM platform.restaurants
+		WHERE id = $1 AND is_active`, id)
+
+	var partner domain.Partner
+	switch err := row.Scan(&partner.ID, &partner.Name, &partner.BaseURL, &partner.IsActive); {
+	case errors.Is(err, sql.ErrNoRows):
+		return domain.Partner{}, domain.ErrRestaurantNotFound
+	case err != nil:
+		return domain.Partner{}, fmt.Errorf("прочитать заведение %s: %w", id, err)
+	}
+
+	return partner, nil
 }

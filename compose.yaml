@@ -57,6 +57,9 @@ services:
       # Заведение, которому ждать очередного цикла долго, зовёт внеочередное обновление.
       PLATFORM_CATALOG_SYNC_INTERVAL: ${PLATFORM_CATALOG_SYNC_INTERVAL:-30s}
       PLATFORM_CATALOG_SYNC_TIMEOUT: ${PLATFORM_CATALOG_SYNC_TIMEOUT:-15s}
+      # Сколько площадка ждёт решения заведения по заказу: этот предел ждёт человек
+      # перед экраном, поэтому он короче, чем ожидание фоновой выгрузки меню.
+      PLATFORM_ORDER_TIMEOUT: ${PLATFORM_ORDER_TIMEOUT:-5s}
       # Служба подключается к уже накатанной базе: мигрирует отдельный шаг выше.
       PLATFORM_DATABASE_DSN: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
     ports:

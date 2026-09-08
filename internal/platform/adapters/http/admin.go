@@ -1,10 +1,8 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -117,35 +115,12 @@ func (a adminAPI) UpdateRestaurant(w http.ResponseWriter, r *http.Request, resta
 	})
 }
 
-// decodeAdminBody разбирает тело запроса и убеждается, что в нём есть перечисленные поля.
-//
-// Обязательность полей объявлена спецификацией, но кодогенератор её не проверяет, а у
-// флага подключения значение по умолчанию — осмысленное: правка без `is_active` тихо
-// отключила бы заведение, и узнал бы об этом не администратор, а покупатель, не нашедший
-// заведение на витрине.
-//
-// Неизвестные поля не отвергаются: клиент новее службы не должен ломаться о поле, о
-// котором она ещё не знает. Тело читается целиком, но его размер уже ограничен обвязкой
-// поверхности.
+// decodeAdminBody разбирает тело запроса админской поверхности и переводит отказ разбора
+// в ошибку её предметной области: причину читает администратор, и отвечает ему та же
+// ветка, что и на неверно описанное заведение.
 func decodeAdminBody(r *http.Request, body any, required ...string) error {
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		return domain.InvalidPartnerError{Reason: "тело запроса: " + err.Error()}
-	}
-
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return domain.InvalidPartnerError{Reason: "тело запроса: " + err.Error()}
-	}
-
-	for _, field := range required {
-		if _, ok := fields[field]; !ok {
-			return domain.InvalidPartnerError{Reason: field + ": обязательное поле"}
-		}
-	}
-
-	if err := json.Unmarshal(raw, body); err != nil {
-		return domain.InvalidPartnerError{Reason: "тело запроса: " + err.Error()}
+	if err := decodeBody(r, body, required...); err != nil {
+		return domain.InvalidPartnerError{Reason: err.Error()}
 	}
 
 	return nil
