@@ -1,8 +1,6 @@
 .git/
-.cache/
 .data/
 .env
 docs/
 README.md
 Makefile
-compose.yaml
