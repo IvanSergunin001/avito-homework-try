@@ -1,0 +1,85 @@
+' C4 Level 3 — компоненты службы `platform`. Исходник диаграммы; картинка рождается из
+' него командой `make diagrams`. Один компонент здесь — один пакет или один сценарий
+' в `internal/platform`, и подпись называет файл, в котором он живёт.
+@startuml c4_component_platform
+!include <C4/C4_Component>
+
+title Площадка (platform) — C4 Level 3: компоненты
+
+Person(customer, "Покупатель", "User-Id в заголовке")
+Person(support, "Администратор и саппорт", "User-Id в заголовке — тот же, что у покупателя: админская поверхность не закрыта")
+System_Ext(box, "Заведение", "Коробка или своя система заведения по партнёрскому контракту")
+
+Container_Boundary(platform, "platform — Go 1.27, chi") {
+    Component(httpx, "HTTP-обвязка", "internal/pkg/httpx", "Роутер chi: идентификатор запроса, лог, восстановление после паники, лимит тела 1 МБ, проба здоровья, ответы problem+json")
+
+    Component(customer_api, "Клиентская поверхность", "adapters/http/customer.go, customer_orders.go", "/api/kitchen/v1/customer: витрина, меню, поиск, оформление заказа, его состояние и отмена покупателем")
+    Component(partner_api, "Партнёрская поверхность", "adapters/http/partner.go", "/api/kitchen/v1/partner: уведомление о смене статуса, внеочередное обновление каталога")
+    Component(admin_api, "Админская поверхность", "adapters/http/admin.go, admin_orders.go", "/api/kitchen/v1/admin: онбординг заведения, правка реквизитов, отмена заказа через саппорт")
+    Component(guard, "Опознание заведения", "adapters/http/auth.go, application/access.go", "Партнёрский ключ bearer-токеном: заведение ищется по SHA-256-хешу ключа; 401 без ключа и 401 на неопознанный. Закрывает одну поверхность из трёх")
+
+    Component(showcase, "Витрина", "application/showcase.go", "Список работающих заведений и карточка заведения")
+    Component(catalog, "Каталог", "application/catalog.go", "Меню заведения, карточка товара, поиск по названию, окно limit/offset")
+    Component(catalog_sync, "Синхронизация каталога", "application/catalog_sync.go", "Забирает меню заведения страницами и применяет его целиком: по расписанию, по просьбе заведения и вдогонку изменившейся цене")
+    Component(ordering, "Оформление заказа", "application/ordering.go", "Считает сумму по своему каталогу, пишет заказ, передаёт его заведению, разбирает отказы и повторную отправку")
+    Component(progress, "Продвижение заказа", "application/progress.go", "Принимает уведомления заведения о смене статуса")
+    Component(cancellation, "Отмена заказа", "application/cancellation.go", "Отмена покупателем и через саппорт, сообщение об отмене заведению")
+    Component(onboarding, "Онбординг заведения", "application/onboarding.go", "Регистрация заведения, партнёрский ключ, правка адреса интеграции")
+
+    Component(order_aggregate, "Агрегат Order", "domain/order.go, journal.go, idempotency.go", "Позиции внутри агрегата, подсчёт суммы, матрица переходов с инициатором, правила отмены, отпечаток запроса, журнал состояний")
+    Component(partner_domain, "Заведение и товар", "domain/partner.go, restaurant.go, product.go, catalog.go", "Реквизиты интеграции, хеш партнёрского ключа, позиция каталога и её проверки")
+
+    Component(store, "Хранилище", "adapters/postgres", "Заведения, товары, заказы и журнал состояний; выгрузка каталога — одной транзакцией")
+    Component(box_client, "Клиент заведения", "adapters/restaurant_client", "Сгенерированный по партнёрской спецификации клиент: меню, передача заказа, отмена — с таймаутом и потолком размера ответа")
+}
+
+ContainerDb(db, "Схема platform", "PostgreSQL 18", "restaurants, products, orders, order_status_events")
+
+Rel(customer, httpx, "HTTPS /api/kitchen/v1/customer, JSON")
+Rel(support, httpx, "HTTPS /api/kitchen/v1/admin, JSON")
+Rel(box, httpx, "Уведомление о статусе, просьба обновить каталог", "HTTPS /api/kitchen/v1/partner, Bearer")
+
+Rel(httpx, customer_api, "Маршрутизирует")
+Rel(httpx, partner_api, "Маршрутизирует")
+Rel(httpx, admin_api, "Маршрутизирует")
+Rel(partner_api, guard, "Чей это ключ")
+
+Rel(customer_api, showcase, "")
+Rel(customer_api, catalog, "")
+Rel(customer_api, ordering, "")
+Rel(customer_api, cancellation, "")
+Rel(partner_api, progress, "")
+Rel(partner_api, catalog_sync, "Внеочередное обновление")
+Rel(admin_api, onboarding, "")
+Rel(admin_api, cancellation, "Отмена через саппорт")
+Rel(ordering, catalog_sync, "Цена разошлась — сходить за меню вне очереди")
+
+Rel(ordering, order_aggregate, "Правила заказа")
+Rel(progress, order_aggregate, "Правила заказа")
+Rel(cancellation, order_aggregate, "Правила заказа")
+Rel(catalog_sync, partner_domain, "Проверка позиций выгрузки")
+Rel(onboarding, partner_domain, "Ключ и реквизиты")
+Rel(guard, partner_domain, "Хеш ключа")
+
+Rel(showcase, store, "")
+Rel(catalog, store, "")
+Rel(ordering, store, "")
+Rel(progress, store, "")
+Rel(cancellation, store, "")
+Rel(onboarding, store, "")
+Rel(catalog_sync, store, "Применяет выгрузку целиком")
+Rel(store, db, "SQL", "database/sql")
+
+Rel(catalog_sync, box_client, "Меню страницами")
+Rel(ordering, box_client, "Заказ с ключом идемпотентности")
+Rel(cancellation, box_client, "Отмена заказа")
+Rel(box_client, box, "HTTPS /api/kitchen/v1/restaurant партнёрского контракта, без аутентификации в MVP")
+
+note as scheduler
+  Обход заведений по расписанию (PLATFORM_CATALOG_SYNC_INTERVAL) заводит
+  cmd/platform и ведёт им тот же сценарий синхронизации, который дёргает
+  партнёрская ручка внеочередного обновления. Своего пути в системе у
+  расписания нет — поэтому нет и своего компонента.
+end note
+scheduler .. catalog_sync
+@enduml

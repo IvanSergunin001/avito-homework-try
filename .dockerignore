@@ -2,5 +2,7 @@
 .data/
 .env
 docs/
+# Исходники диаграмм — исключение: по ним собирается цель `diagrams`.
+!docs/puml/
 README.md
 Makefile

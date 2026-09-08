@@ -15,7 +15,7 @@ DOCKER_HOST_ALIAS := host.docker.internal
 # (`migrationSets`) и в таблице контекстов README — третий правится во всех местах разом.
 context    ?= platform
 
-.PHONY: help up down logs clean-data api api-check migrate-up migrate-status migration build lint test
+.PHONY: help up down logs clean-data api api-check diagrams diagrams-check migrate-up migrate-status migration build lint test
 
 help: ## Список команд
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -60,6 +60,19 @@ build: ## Скомпилировать репозиторий и прогнат�
 
 lint: ## Линтер с конфигом из репозитория (.golangci.yml)
 	docker build --target lint .
+
+# Диаграммы — код: C4 и оба CJM лежат исходниками в `docs/puml`, картинки в `docs/img`
+# отрисовываются из них и коммитятся (README показывает их прямо в тексте).
+diagrams: ## Отрисовать C4 и CJM из исходников docs/puml в docs/img
+	docker build --target diagram-artifacts --output type=local,dest=. .
+
+diagrams-check: diagrams ## Проверить, что отрисованное совпадает с закоммиченным
+	@test -z "$$(git status --porcelain -- docs/img)" || { \
+		git status --short -- docs/img; \
+		echo "Диаграммы разошлись с исходниками — закоммитьте результат make diagrams."; \
+		exit 1; \
+	}
+	@echo "Диаграммы совпадают с исходниками: диффа нет."
 
 # Миграции накатываются отдельным шагом до старта служб (сервис `migrate` в compose.yaml).
 # Те же файлы миграций тесты накатывают на свою базу сами — см. internal/pkg/testdb.
