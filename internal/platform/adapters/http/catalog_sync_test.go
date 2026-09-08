@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	customer "github.com/IvanSergunin001/Test157/api/customer/v1"
 	platformhttp "github.com/IvanSergunin001/Test157/internal/platform/adapters/http"
 )
 
@@ -258,18 +259,18 @@ func (p *platform) lastSyncedAt(t *testing.T, restaurant uuid.UUID) *time.Time {
 
 // item находит на странице выдачи позицию по названию: тест называет то, что проверяет,
 // а не место, на которое позиция попала в порядке выдачи.
-func (p pageOfProducts) item(t *testing.T, name string) productCard {
+func productOnPage(t *testing.T, page customer.ProductPage, name string) customer.Product {
 	t.Helper()
 
-	for _, card := range p.Items {
+	for _, card := range page.Items {
 		if card.Name == name {
 			return card
 		}
 	}
 
-	t.Fatalf("на витрине нет позиции %q, есть %v", name, p.names())
+	t.Fatalf("на витрине нет позиции %q, есть %v", name, productNames(page))
 
-	return productCard{}
+	return customer.Product{}
 }
 
 // menuOf собирает меню из count различимых позиций: их больше, чем помещается на одну
@@ -300,12 +301,12 @@ func TestMenuOfRestaurantReachesTheShowcaseAfterSync(t *testing.T) {
 
 	platform.refreshCatalog(t, registered.Key)
 
-	page := platform.products(t, menuPath(registered.ID, ""))
+	page := platform.menu(t, registered.ID, nil)
 	if len(page.Items) != 2 {
-		t.Fatalf("на витрине %d позиций, ожидали обе из меню заведения: %v", len(page.Items), page.names())
+		t.Fatalf("на витрине %d позиций, ожидали обе из меню заведения: %v", len(page.Items), productNames(page))
 	}
 
-	croissant := page.item(t, "Круассан с миндалём")
+	croissant := productOnPage(t, page, "Круассан с миндалём")
 	if croissant.Price != 45000 {
 		t.Errorf("позиция приехала за %d, ожидали 45000 копеек", croissant.Price)
 	}
@@ -314,7 +315,7 @@ func TestMenuOfRestaurantReachesTheShowcaseAfterSync(t *testing.T) {
 	}
 	// Стоп-лист заведения доезжает до витрины как есть: позиция видна, но заказать её
 	// нельзя — исчезни она совсем, покупатель искал бы блюдо, которое вчера видел.
-	if page.item(t, "Багет").IsAvailable {
+	if productOnPage(t, page, "Багет").IsAvailable {
 		t.Error("позиция из стоп-листа заведения приехала на витрину доступной")
 	}
 }
@@ -335,10 +336,10 @@ func TestPositionIsRecognisedByExternalIdentifierAndKeepsItsCardBetweenSyncs(t *
 	bakery.setMenu(boxItem{ExternalID: "croissant", Name: "Круассан с миндалём", Price: 47000})
 	platform.refreshCatalog(t, registered.Key)
 
-	page := platform.products(t, menuPath(registered.ID, ""))
+	page := platform.menu(t, registered.ID, nil)
 	if len(page.Items) != 1 {
 		t.Fatalf("на витрине %d позиций, ожидали одну: та же позиция не заводится второй раз: %v",
-			len(page.Items), page.names())
+			len(page.Items), productNames(page))
 	}
 
 	after, _ := platform.storedPosition(t, registered.ID, "croissant")
@@ -369,7 +370,7 @@ func TestPositionThatVanishedFromTheDumpDisappearsFromTheShowcaseButKeepsItsCard
 	bakery.setMenu(boxItem{ExternalID: "croissant", Name: "Круассан", Price: 45000})
 	platform.refreshCatalog(t, registered.Key)
 
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали только оставшийся в меню «Круассан»", names)
 	}
 	if document := platform.refusal(t,
@@ -434,7 +435,7 @@ func TestPriceChangedInTheRestaurantReachesTheShowcaseWithoutWaitingForTheTimer(
 	if bakery.visited() == visitsBefore {
 		t.Fatal("площадка не сходила за меню на просьбу обновиться немедленно")
 	}
-	if got := platform.products(t, menuPath(registered.ID, "")).Items[0].Price; got != 52000 {
+	if got := platform.menu(t, registered.ID, nil).Items[0].Price; got != 52000 {
 		t.Errorf("на витрине цена %d, ожидали новую 52000 сразу после просьбы обновиться", got)
 	}
 }
@@ -454,7 +455,7 @@ func TestRefreshTakesTheMenuOfTheRestaurantThatAskedAndNotOfItsNeighbour(t *test
 	if coffee.visited() != 0 {
 		t.Error("площадка сходила за меню соседнего заведения по чужой просьбе")
 	}
-	if names := platform.products(t, menuPath(steam.ID, "")).names(); len(names) != 0 {
+	if names := productNames(platform.menu(t, steam.ID, nil)); len(names) != 0 {
 		t.Errorf("в меню соседнего заведения %v, ожидали пусто: его меню никто не просил забирать", names)
 	}
 }
@@ -471,7 +472,7 @@ func TestMenuLongerThanOnePageIsTakenWhole(t *testing.T) {
 
 	// Выгрузка страничная, и площадка обязана дойти до конца: остановись она на первой
 	// странице — на витрине оказалось бы меню, которого у заведения нет.
-	if total := platform.products(t, menuPath(registered.ID, "")).Page.Total; total != dumpLongerThanOnePage {
+	if total := platform.menu(t, registered.ID, nil).Page.Total; total != dumpLongerThanOnePage {
 		t.Errorf("на витрине %d позиций, ожидали всё меню из %d", total, dumpLongerThanOnePage)
 	}
 	if bakery.visited() < 2 {
@@ -506,8 +507,8 @@ func TestSyncBrokenInTheMiddleOfTheDumpLeavesThePreviousCatalogUntouched(t *test
 
 	// Ни одной позиции недочитанной выгрузки на витрине нет: применённая наполовину она
 	// оставила бы заведение с меню, которого нет ни у него, ни у площадки до синхронизации.
-	page := platform.products(t, menuPath(registered.ID, ""))
-	if names := page.names(); len(names) != 1 || names[0] != "Круассан" {
+	page := platform.menu(t, registered.ID, nil)
+	if names := productNames(page); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог из одного «Круассана»", names)
 	}
 }
@@ -544,7 +545,7 @@ func TestDumpLargerThanTheCeilingIsRefusedEntirely(t *testing.T) {
 
 	platform.refreshCatalog(t, registered.Key)
 
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог: выгрузка без конца не применяется вовсе", names)
 	}
 }
@@ -582,7 +583,7 @@ func TestResponseLargerThanTheAllowedSizeIsRefusedEntirely(t *testing.T) {
 
 	platform.refreshCatalog(t, registered.Key)
 
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог: ответ сверх потолка не применяется вовсе", names)
 	}
 }
@@ -617,7 +618,7 @@ func TestPageWithMoreItemsThanAskedForIsRefusedEntirely(t *testing.T) {
 
 	platform.refreshCatalog(t, registered.Key)
 
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог", names)
 	}
 }
@@ -640,7 +641,7 @@ func TestSameExternalIdentifierTwiceInOneDumpIsRefusedEntirely(t *testing.T) {
 
 	platform.refreshCatalog(t, registered.Key)
 
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог", names)
 	}
 }
@@ -663,7 +664,7 @@ func TestPositionThatBreaksTheContractSpoilsTheWholeDumpAndNotOnlyItself(t *test
 
 	platform.refreshCatalog(t, registered.Key)
 
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог целиком", names)
 	}
 }
@@ -689,7 +690,7 @@ func TestRestaurantThatDoesNotAnswerDoesNotHoldTheSyncForever(t *testing.T) {
 	if waited := time.Since(started); waited > boxSilenceLimit*silencePatience {
 		t.Errorf("площадка ждала молчащее заведение %s при пределе %s", waited, boxSilenceLimit)
 	}
-	if names := platform.products(t, menuPath(registered.ID, "")).names(); len(names) != 1 || names[0] != "Круассан" {
+	if names := productNames(platform.menu(t, registered.ID, nil)); len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали прежний каталог", names)
 	}
 }

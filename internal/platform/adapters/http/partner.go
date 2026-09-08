@@ -130,7 +130,6 @@ func (a partnerAPI) RefreshCatalog(
 
 // Уведомление о смене статуса заказа описано контрактом, его обработчик подставляется
 // своим этапом.
-
 func (partnerAPI) NotifyOrderStatus(
 	context.Context, partner_v1.NotifyOrderStatusRequestObject,
 ) (partner_v1.NotifyOrderStatusResponseObject, error) {

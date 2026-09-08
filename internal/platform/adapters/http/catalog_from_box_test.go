@@ -21,7 +21,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
-	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http"
+	// Граница контекстов, которую держит depguard, — про код служб, а не про этот тест:
+	// он существует ровно затем, чтобы проверить обе стороны опубликованного контракта
+	// вместе, и без второй стороны его не написать (см. комментарий к файлу).
+	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http" //nolint:depguard // интеграционный тест поднимает обе стороны контракта намеренно
 )
 
 // operatorBox — настоящая коробка заведения, поднятая рядом с площадкой: меню в ней ведёт
@@ -147,7 +150,7 @@ func TestPriceEditedInTheBoxIsVisibleOnTheShowcaseAfterRefresh(t *testing.T) {
 	croissant := box.addItem(t, "Круассан", 45000, 10)
 	platform.refreshCatalog(t, registered.Key)
 
-	if got := platform.products(t, menuPath(registered.ID, "")).item(t, "Круассан").Price; got != 45000 {
+	if got := productOnPage(t, platform.menu(t, registered.ID, nil), "Круассан").Price; got != 45000 {
 		t.Fatalf("на витрине цена %d, ожидали заведённую в коробке 45000", got)
 	}
 
@@ -156,11 +159,11 @@ func TestPriceEditedInTheBoxIsVisibleOnTheShowcaseAfterRefresh(t *testing.T) {
 
 	// Позиция та же самая: внешним идентификатором коробка отдаёт свой идентификатор
 	// позиции, и правка карточки его не меняет.
-	card := platform.products(t, menuPath(registered.ID, "")).item(t, "Круассан с миндалём")
+	card := productOnPage(t, platform.menu(t, registered.ID, nil), "Круассан с миндалём")
 	if card.Price != 52000 {
 		t.Errorf("на витрине цена %d, ожидали поправленную оператором 52000", card.Price)
 	}
-	if card.ID != platformCardOf(t, platform, registered.ID, croissant.ID).String() {
+	if card.Id != platformCardOf(t, platform, registered.ID, croissant.ID) {
 		t.Error("после правки в коробке на витрине появилась вторая карточка вместо поправленной")
 	}
 }
@@ -180,7 +183,7 @@ func TestStopListMarkedInTheBoxReachesTheShowcaseAfterRefresh(t *testing.T) {
 
 	// Позиция остаётся на витрине: убери её — и покупатель искал бы блюдо, которое вчера
 	// видел, не понимая, куда оно делось.
-	card := platform.products(t, menuPath(registered.ID, "")).item(t, "Круассан")
+	card := productOnPage(t, platform.menu(t, registered.ID, nil), "Круассан")
 	if card.IsAvailable {
 		t.Error("позиция, отмеченная оператором в стоп-листе, на витрине доступна")
 	}
@@ -188,7 +191,7 @@ func TestStopListMarkedInTheBoxReachesTheShowcaseAfterRefresh(t *testing.T) {
 	box.markStopList(t, croissant.ID, false)
 	platform.refreshCatalog(t, registered.Key)
 
-	if !platform.products(t, menuPath(registered.ID, "")).item(t, "Круассан").IsAvailable {
+	if !productOnPage(t, platform.menu(t, registered.ID, nil), "Круассан").IsAvailable {
 		t.Error("позиция, снятая оператором со стоп-листа, на витрине так и осталась недоступной")
 	}
 }
@@ -207,7 +210,7 @@ func TestItemRemovedInTheBoxDisappearsFromTheShowcaseAfterRefresh(t *testing.T) 
 	box.removeItem(t, baguette.ID)
 	platform.refreshCatalog(t, registered.Key)
 
-	names := platform.products(t, menuPath(registered.ID, "")).names()
+	names := productNames(platform.menu(t, registered.ID, nil))
 	if len(names) != 1 || names[0] != "Круассан" {
 		t.Errorf("на витрине %v, ожидали только оставшийся в коробке «Круассан»", names)
 	}

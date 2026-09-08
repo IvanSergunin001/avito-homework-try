@@ -47,7 +47,7 @@ type MenuSource interface {
 	// Реализация обязана ограничивать себя сама: таймаут запроса, потолок размера ответа
 	// и потоковый разбор — это защита от стороннего заведения, и она не может зависеть от
 	// того, вспомнит ли о ней сценарий.
-	Page(ctx context.Context, baseURL string, window Window) (MenuBatch, error)
+	Page(ctx context.Context, baseURL string, page domain.Page) (MenuBatch, error)
 }
 
 // CatalogWriter — применение выгрузки к каталогу площадки.
@@ -162,7 +162,7 @@ func (s *CatalogSync) pull(ctx context.Context, baseURL string) ([]domain.Catalo
 	)
 
 	for {
-		batch, err := s.source.Page(ctx, baseURL, Window{Limit: catalogPageSize, Offset: len(items)})
+		batch, err := s.source.Page(ctx, baseURL, domain.Page{Limit: catalogPageSize, Offset: len(items)})
 		if err != nil {
 			return nil, err
 		}
