@@ -1,8 +1,9 @@
 # Всё, кроме `docker compose`, выполняется внутри контейнеров: локально установленный
 # Go не нужен ни для сборки, ни для линтера, ни для тестов (см. Dockerfile).
 
-TEST_IMAGE ?= avito-kitchen-test
-TEST_ARGS  ?= ./...
+TEST_IMAGE   ?= avito-kitchen-test
+TEST_ARGS    ?= ./...
+TEST_TIMEOUT ?= 30m
 DOCKER_SOCK := /var/run/docker.sock
 # Контекст, к которому относится новая миграция: платформа или коробка заведения.
 context    ?= platform
@@ -77,8 +78,10 @@ migration: ## Создать миграцию: make migration name=add_orders [c
 		--build-arg MIGRATION_NAME=$(name) \
 		--output type=local,dest=. .
 
-test: ## Тесты; сокет Docker нужен тестам с testcontainers
+# Предел прогона больше стандартных десяти минут: сквозной тест поднимает систему целиком,
+# и на машине, где образы ещё не собраны, в это время попадает сборка обеих служб.
+test: ## Тесты; сокет Docker нужен и оснастке базы, и сквозному тесту
 	docker build --target test --tag $(TEST_IMAGE) .
 	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) \
 		--env TEST_DB_DSN --env TEST_KEEP_DB \
-		$(TEST_IMAGE) go test $(TEST_ARGS)
+		$(TEST_IMAGE) go test -timeout $(TEST_TIMEOUT) $(TEST_ARGS)

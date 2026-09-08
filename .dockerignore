@@ -6,3 +6,6 @@ docs/
 !docs/puml/
 README.md
 Makefile
+# `compose.yaml` в контексте остаётся: по нему тесты в `internal/pkg/config` сверяют
+# умолчания, и им же сквозной тест поднимает систему изнутри образа с тестами
+# (см. цель `test` в Dockerfile).
