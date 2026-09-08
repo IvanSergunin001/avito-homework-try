@@ -68,11 +68,11 @@ func TestComposeKeysAreDocumented(t *testing.T) {
 	}
 }
 
-func TestServiceDefaultsMatchEnvExample(t *testing.T) {
+func TestCodeDefaultsMatchEnvExample(t *testing.T) {
 	example := readEnvExample(t)
 
 	for _, prefix := range []string{"PLATFORM_", "RESTAURANT_"} {
-		defaults := config.DefaultService(0)
+		defaults := config.Default(0)
 
 		want, ok := example[prefix+"SHUTDOWN_TIMEOUT"]
 		if !ok {

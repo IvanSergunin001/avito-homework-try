@@ -14,8 +14,8 @@ import (
 	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http"
 )
 
-// envPrefix — префикс переменных окружения коробки заведения: обе службы живут в одном окружении
-// Compose, и разделяет их только он.
+// envPrefix — префикс переменных окружения коробки заведения. Источник настроек один —
+// окружение процесса, — а разделение их по сервисам идёт по префиксу.
 const envPrefix = "RESTAURANT_"
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 }
 
 func run() error {
-	cfg := config.DefaultService(8081)
+	cfg := config.Default(8081)
 	if err := config.Load(envPrefix, &cfg); err != nil {
 		return err
 	}

@@ -17,10 +17,10 @@ import (
 	"github.com/knadh/koanf/v2"
 )
 
-// Service — настройки, общие для площадки и коробки заведения. Каждая служба читает их
-// под своим префиксом (`PLATFORM_`, `RESTAURANT_`), поэтому обе живут в одном окружении
-// Compose и не мешают друг другу.
-type Service struct {
+// Config — настройки, общие для площадки и коробки заведения. Источник настроек один —
+// окружение процесса, — а разделение их по сервисам идёт по префиксу (`PLATFORM_`,
+// `RESTAURANT_`): каждый сервис читает свой и чужих переменных не видит.
+type Config struct {
 	// HTTPPort — порт, который слушает HTTP-сервер службы. Компоуз публикует его на
 	// хост под тем же номером, поэтому порт — единственный ключ, а не пара «адрес + порт».
 	HTTPPort int `koanf:"http_port"`
@@ -30,10 +30,10 @@ type Service struct {
 	LogLevel slog.Level `koanf:"log_level"`
 }
 
-// DefaultService — значения по умолчанию для службы, слушающей httpPort. Их переопределяет
+// Default — значения по умолчанию для службы, слушающей httpPort. Их переопределяет
 // окружение; в коде они нужны, чтобы бинарь запускался без единой переменной.
-func DefaultService(httpPort int) Service {
-	return Service{
+func Default(httpPort int) Config {
+	return Config{
 		HTTPPort:        httpPort,
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        slog.LevelInfo,
@@ -41,8 +41,8 @@ func DefaultService(httpPort int) Service {
 }
 
 // Addr — адрес для http.Server: служба слушает все интерфейсы контейнера.
-func (s Service) Addr() string {
-	return net.JoinHostPort("", strconv.Itoa(s.HTTPPort))
+func (c Config) Addr() string {
+	return net.JoinHostPort("", strconv.Itoa(c.HTTPPort))
 }
 
 // Load разбирает переменные окружения с префиксом prefix (например, `PLATFORM_`) в dst.
@@ -55,7 +55,7 @@ func (s Service) Addr() string {
 //
 // Параметр — `*T`, а не `any`: разбор пишет в dst, и не-указатель здесь не ошибка вызова,
 // а падение на старте службы. Тип остаётся свободным, потому что у каждой службы своя
-// структура настроек, встраивающая [Service].
+// структура настроек, встраивающая [Config].
 func Load[T any](prefix string, dst *T) error {
 	k := koanf.New(".")
 

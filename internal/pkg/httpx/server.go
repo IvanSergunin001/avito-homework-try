@@ -16,7 +16,7 @@ import (
 //
 // Настройки передаются одним значением, а не адресом и таймаутом по отдельности: это одна
 // и та же тройка полей, которая всё равно ездит вместе от разбора окружения до сервера.
-func Serve(ctx context.Context, log *slog.Logger, cfg config.Service, handler http.Handler) error {
+func Serve(ctx context.Context, log *slog.Logger, cfg config.Config, handler http.Handler) error {
 	addr := cfg.Addr()
 
 	srv := &http.Server{

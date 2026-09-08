@@ -14,8 +14,8 @@ import (
 	platformhttp "github.com/IvanSergunin001/Test157/internal/platform/adapters/http"
 )
 
-// envPrefix — префикс переменных окружения площадки: обе службы живут в одном окружении
-// Compose, и разделяет их только он.
+// envPrefix — префикс переменных окружения площадки. Источник настроек один — окружение
+// процесса, — а разделение их по сервисам идёт по префиксу.
 const envPrefix = "PLATFORM_"
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 }
 
 func run() error {
-	cfg := config.DefaultService(8080)
+	cfg := config.Default(8080)
 	if err := config.Load(envPrefix, &cfg); err != nil {
 		return err
 	}
