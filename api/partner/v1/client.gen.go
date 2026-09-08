@@ -18,63 +18,126 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for NotifiedStatus.
+const (
+	NotifiedStatusCancelled  NotifiedStatus = "cancelled"
+	NotifiedStatusCompleted  NotifiedStatus = "completed"
+	NotifiedStatusConfirmed  NotifiedStatus = "confirmed"
+	NotifiedStatusCooking    NotifiedStatus = "cooking"
+	NotifiedStatusDelivering NotifiedStatus = "delivering"
+)
+
+// Valid indicates whether the value is a known member of the NotifiedStatus enum.
+func (e NotifiedStatus) Valid() bool {
+	switch e {
+	case NotifiedStatusCancelled:
+		return true
+	case NotifiedStatusCompleted:
+		return true
+	case NotifiedStatusConfirmed:
+		return true
+	case NotifiedStatusCooking:
+		return true
+	case NotifiedStatusDelivering:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrderStatusStateStatus.
+const (
+	OrderStatusStateStatusCancelled   OrderStatusStateStatus = "cancelled"
+	OrderStatusStateStatusCompleted   OrderStatusStateStatus = "completed"
+	OrderStatusStateStatusConfirmed   OrderStatusStateStatus = "confirmed"
+	OrderStatusStateStatusCooking     OrderStatusStateStatus = "cooking"
+	OrderStatusStateStatusDelivering  OrderStatusStateStatus = "delivering"
+	OrderStatusStateStatusPending     OrderStatusStateStatus = "pending"
+	OrderStatusStateStatusUnderReview OrderStatusStateStatus = "under_review"
+)
+
+// Valid indicates whether the value is a known member of the OrderStatusStateStatus enum.
+func (e OrderStatusStateStatus) Valid() bool {
+	switch e {
+	case OrderStatusStateStatusCancelled:
+		return true
+	case OrderStatusStateStatusCompleted:
+		return true
+	case OrderStatusStateStatusConfirmed:
+		return true
+	case OrderStatusStateStatusCooking:
+		return true
+	case OrderStatusStateStatusDelivering:
+		return true
+	case OrderStatusStateStatusPending:
+		return true
+	case OrderStatusStateStatusUnderReview:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
-	Forbidden             ProblemCode = "forbidden"
-	IdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
-	InternalError         ProblemCode = "internal_error"
-	MenuItemNotFound      ProblemCode = "menu_item_not_found"
-	NotImplemented        ProblemCode = "not_implemented"
-	OrderNotCancellable   ProblemCode = "order_not_cancellable"
-	OrderNotFound         ProblemCode = "order_not_found"
-	OrderNotUnderReview   ProblemCode = "order_not_under_review"
-	OutOfStock            ProblemCode = "out_of_stock"
-	PriceChanged          ProblemCode = "price_changed"
-	ProductNotFound       ProblemCode = "product_not_found"
-	RestaurantClosed      ProblemCode = "restaurant_closed"
-	RestaurantNotFound    ProblemCode = "restaurant_not_found"
-	RestaurantUnavailable ProblemCode = "restaurant_unavailable"
-	Unauthorized          ProblemCode = "unauthorized"
-	UnknownProduct        ProblemCode = "unknown_product"
-	ValidationFailed      ProblemCode = "validation_failed"
+	ProblemCodeForbidden             ProblemCode = "forbidden"
+	ProblemCodeIdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
+	ProblemCodeInternalError         ProblemCode = "internal_error"
+	ProblemCodeMenuItemNotFound      ProblemCode = "menu_item_not_found"
+	ProblemCodeNotImplemented        ProblemCode = "not_implemented"
+	ProblemCodeOrderNotCancellable   ProblemCode = "order_not_cancellable"
+	ProblemCodeOrderNotFound         ProblemCode = "order_not_found"
+	ProblemCodeOrderNotUnderReview   ProblemCode = "order_not_under_review"
+	ProblemCodeOutOfStock            ProblemCode = "out_of_stock"
+	ProblemCodePriceChanged          ProblemCode = "price_changed"
+	ProblemCodeProductNotFound       ProblemCode = "product_not_found"
+	ProblemCodeRestaurantClosed      ProblemCode = "restaurant_closed"
+	ProblemCodeRestaurantNotFound    ProblemCode = "restaurant_not_found"
+	ProblemCodeRestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	ProblemCodeTransitionNotAllowed  ProblemCode = "transition_not_allowed"
+	ProblemCodeUnauthorized          ProblemCode = "unauthorized"
+	ProblemCodeUnknownProduct        ProblemCode = "unknown_product"
+	ProblemCodeValidationFailed      ProblemCode = "validation_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
-	case Forbidden:
+	case ProblemCodeForbidden:
 		return true
-	case IdempotencyKeyReuse:
+	case ProblemCodeIdempotencyKeyReuse:
 		return true
-	case InternalError:
+	case ProblemCodeInternalError:
 		return true
-	case MenuItemNotFound:
+	case ProblemCodeMenuItemNotFound:
 		return true
-	case NotImplemented:
+	case ProblemCodeNotImplemented:
 		return true
-	case OrderNotCancellable:
+	case ProblemCodeOrderNotCancellable:
 		return true
-	case OrderNotFound:
+	case ProblemCodeOrderNotFound:
 		return true
-	case OrderNotUnderReview:
+	case ProblemCodeOrderNotUnderReview:
 		return true
-	case OutOfStock:
+	case ProblemCodeOutOfStock:
 		return true
-	case PriceChanged:
+	case ProblemCodePriceChanged:
 		return true
-	case ProductNotFound:
+	case ProblemCodeProductNotFound:
 		return true
-	case RestaurantClosed:
+	case ProblemCodeRestaurantClosed:
 		return true
-	case RestaurantNotFound:
+	case ProblemCodeRestaurantNotFound:
 		return true
-	case RestaurantUnavailable:
+	case ProblemCodeRestaurantUnavailable:
 		return true
-	case Unauthorized:
+	case ProblemCodeTransitionNotAllowed:
 		return true
-	case UnknownProduct:
+	case ProblemCodeUnauthorized:
 		return true
-	case ValidationFailed:
+	case ProblemCodeUnknownProduct:
+		return true
+	case ProblemCodeValidationFailed:
 		return true
 	default:
 		return false
@@ -167,6 +230,13 @@ type MenuPage struct {
 // Example: 45000
 type Money = int64
 
+// NotifiedStatus Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
+// перечень не входят: их ставит сама площадка — при создании заказа и по успешному
+// синхронному ответу на приём заказа.
+//
+// Example: cooking
+type NotifiedStatus string
+
 // OrderAcceptance Подтверждение того, что заведение приняло заказ на рассмотрение. Площадка переводит
 // заказ в `under_review` и дальше ждёт уведомлений о статусах.
 type OrderAcceptance struct {
@@ -183,6 +253,22 @@ type OrderCancellation struct {
 	// OrderId Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
 	OrderId openapi_types.UUID `json:"order_id"`
 }
+
+// OrderStatusState Статус заказа на площадке после применения уведомления.
+type OrderStatusState struct {
+	// OrderId Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+	OrderId openapi_types.UUID `json:"order_id"`
+
+	// Status Действующий статус заказа. Может отличаться от присланного, если уведомление опоздало.
+	//
+	// Example: cooking
+	Status OrderStatusStateStatus `json:"status"`
+}
+
+// OrderStatusStateStatus Действующий статус заказа. Может отличаться от присланного, если уведомление опоздало.
+//
+// Example: cooking
+type OrderStatusStateStatus string
 
 // PageMeta Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
 // которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
@@ -303,6 +389,29 @@ type ProblemCode string
 // Example: 2
 type Quantity = int
 
+// StatusNotification Уведомление о смене статуса заказа. Приём идемпотентен: переходы монотонны, поэтому
+// повторное уведомление о том же статусе и уведомление о более раннем статусе после
+// более позднего принимаются и ничего не меняют — это и есть защита от ретраев.
+// Уведомление о заказе в терминальном статусе тоже принимается и ничего не меняет.
+type StatusNotification struct {
+	// OccurredAt Когда статус сменился у заведения. По нему площадка отличает запоздавшее
+	// уведомление от свежего.
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// Reason Причина, если заведение отменило заказ. Показывается покупателю.
+	//
+	// Example: Закончились продукты
+	Reason *string `json:"reason,omitempty"`
+
+	// Status Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
+	// перечень не входят: их ставит сама площадка — при создании заказа и по успешному
+	// синхронному ответу на приём заказа.
+	//
+	//
+	// Example: cooking
+	Status NotifiedStatus `json:"status"`
+}
+
 // IdempotencyAttempt defines model for IdempotencyAttempt.
 type IdempotencyAttempt = int
 
@@ -327,6 +436,11 @@ type BadRequest = ProblemBase
 // сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Conflict = Problem
 
+// Forbidden Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type Forbidden = ProblemBase
+
 // NotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
 // Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
 // Своё поле API добавляет к этой основе через `allOf`.
@@ -336,6 +450,11 @@ type NotFound = ProblemBase
 // Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
 // Своё поле API добавляет к этой основе через `allOf`.
 type RequestEntityTooLarge = ProblemBase
+
+// Unauthorized Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type Unauthorized = ProblemBase
 
 // ListMenuParams defines parameters for ListMenu.
 type ListMenuParams struct {
@@ -365,6 +484,9 @@ type AcceptOrderJSONRequestBody = IncomingOrder
 
 // CancelAcceptedOrderJSONRequestBody defines body for CancelAcceptedOrder for application/json ContentType.
 type CancelAcceptedOrderJSONRequestBody = CancellationRequest
+
+// NotifyOrderStatusJSONRequestBody defines body for NotifyOrderStatus for application/json ContentType.
+type NotifyOrderStatusJSONRequestBody = StatusNotification
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -440,6 +562,17 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// RefreshCatalog Обновить каталог внеочередно (предоставляет площадка)
+	//
+	// Заведение просит площадку забрать меню сейчас, не дожидаясь очередного цикла
+	// синхронизации: так изменение цены или стоп-листа доезжает до витрины сразу.
+	//
+	// Ответ `202` означает, что просьба принята: синхронизация идёт фоном, её результат
+	// в этот ответ не попадает.
+	//
+	// Corresponds with POST /catalog/refresh (the `RefreshCatalog` operationId).
+	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListMenu Меню заведения (реализует заведение)
 	//
 	// Постраничная выдача меню. Площадка забирает меню целиком, страницу за страницей, и
@@ -502,6 +635,55 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /orders/{orderId}/cancel (the `CancelAcceptedOrder` operationId).
 	CancelAcceptedOrder(ctx context.Context, orderId OrderId, body CancelAcceptedOrderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// NotifyOrderStatusWithBody Уведомить о смене статуса заказа (предоставляет площадка)
+	//
+	// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+	// делает: инициатива на стороне заведения.
+	//
+	// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+	// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+	// по нему заведение видит, применилось ли уведомление.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+	NotifyOrderStatusWithBody(ctx context.Context, orderId OrderId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// NotifyOrderStatus Уведомить о смене статуса заказа (предоставляет площадка)
+	//
+	// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+	// делает: инициатива на стороне заведения.
+	//
+	// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+	// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+	// по нему заведение видит, применилось ли уведомление.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+	NotifyOrderStatus(ctx context.Context, orderId OrderId, body NotifyOrderStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// RefreshCatalog Обновить каталог внеочередно (предоставляет площадка)
+//
+// Заведение просит площадку забрать меню сейчас, не дожидаясь очередного цикла
+// синхронизации: так изменение цены или стоп-листа доезжает до витрины сразу.
+//
+// Ответ `202` означает, что просьба принята: синхронизация идёт фоном, её результат
+// в этот ответ не попадает.
+//
+// Corresponds with POST /catalog/refresh (the `RefreshCatalog` operationId).
+func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshCatalogRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListMenu Меню заведения (реализует заведение)
@@ -615,6 +797,81 @@ func (c *Client) CancelAcceptedOrder(ctx context.Context, orderId OrderId, body 
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NotifyOrderStatusWithBody Уведомить о смене статуса заказа (предоставляет площадка)
+//
+// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+// делает: инициатива на стороне заведения.
+//
+// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+// по нему заведение видит, применилось ли уведомление.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+func (c *Client) NotifyOrderStatusWithBody(ctx context.Context, orderId OrderId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewNotifyOrderStatusRequestWithBody(c.Server, orderId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NotifyOrderStatus Уведомить о смене статуса заказа (предоставляет площадка)
+//
+// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+// делает: инициатива на стороне заведения.
+//
+// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+// по нему заведение видит, применилось ли уведомление.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+func (c *Client) NotifyOrderStatus(ctx context.Context, orderId OrderId, body NotifyOrderStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewNotifyOrderStatusRequest(c.Server, orderId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NewRefreshCatalogRequest constructs an http.Request for the RefreshCatalog method
+func NewRefreshCatalogRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/catalog/refresh")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewListMenuRequest constructs an http.Request for the ListMenu method
@@ -792,6 +1049,53 @@ func NewCancelAcceptedOrderRequestWithBody(server string, orderId OrderId, conte
 	return req, nil
 }
 
+// NewNotifyOrderStatusRequest calls the generic NotifyOrderStatus builder with application/json body
+func NewNotifyOrderStatusRequest(server string, orderId OrderId, body NotifyOrderStatusJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewNotifyOrderStatusRequestWithBody(server, orderId, "application/json", bodyReader)
+}
+
+// NewNotifyOrderStatusRequestWithBody constructs an http.Request for the NotifyOrderStatus method, with any body, and a specified content type
+func NewNotifyOrderStatusRequestWithBody(server string, orderId OrderId, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "orderId", orderId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orders/%s/status", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -835,6 +1139,19 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+
+	// RefreshCatalogWithResponse Обновить каталог внеочередно (предоставляет площадка)
+	//
+	// Заведение просит площадку забрать меню сейчас, не дожидаясь очередного цикла
+	// синхронизации: так изменение цены или стоп-листа доезжает до витрины сразу.
+	//
+	// Ответ `202` означает, что просьба принята: синхронизация идёт фоном, её результат
+	// в этот ответ не попадает.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /catalog/refresh (the `RefreshCatalog` operationId).
+	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogResponse, error)
 
 	// ListMenuWithResponse Меню заведения (реализует заведение)
 	//
@@ -900,6 +1217,82 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /orders/{orderId}/cancel (the `CancelAcceptedOrder` operationId).
 	CancelAcceptedOrderWithResponse(ctx context.Context, orderId OrderId, body CancelAcceptedOrderJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelAcceptedOrderResponse, error)
+
+	// NotifyOrderStatusWithBodyWithResponse Уведомить о смене статуса заказа (предоставляет площадка)
+	//
+	// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+	// делает: инициатива на стороне заведения.
+	//
+	// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+	// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+	// по нему заведение видит, применилось ли уведомление.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+	NotifyOrderStatusWithBodyWithResponse(ctx context.Context, orderId OrderId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*NotifyOrderStatusResponse, error)
+
+	// NotifyOrderStatusWithResponse Уведомить о смене статуса заказа (предоставляет площадка)
+	//
+	// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+	// делает: инициатива на стороне заведения.
+	//
+	// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+	// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+	// по нему заведение видит, применилось ли уведомление.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+	NotifyOrderStatusWithResponse(ctx context.Context, orderId OrderId, body NotifyOrderStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*NotifyOrderStatusResponse, error)
+}
+
+type RefreshCatalogResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RefreshCatalogResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RefreshCatalogResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r RefreshCatalogResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RefreshCatalogResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RefreshCatalogResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RefreshCatalogResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListMenuResponse struct {
@@ -1088,6 +1481,94 @@ func (r CancelAcceptedOrderResponse) ContentType() string {
 	return ""
 }
 
+type NotifyOrderStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OrderStatusState
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r NotifyOrderStatusResponse) GetJSON200() *OrderStatusState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r NotifyOrderStatusResponse) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r NotifyOrderStatusResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r NotifyOrderStatusResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r NotifyOrderStatusResponse) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r NotifyOrderStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r NotifyOrderStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r NotifyOrderStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r NotifyOrderStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RefreshCatalogWithResponse Обновить каталог внеочередно (предоставляет площадка)
+//
+// Заведение просит площадку забрать меню сейчас, не дожидаясь очередного цикла
+// синхронизации: так изменение цены или стоп-листа доезжает до витрины сразу.
+//
+// Ответ `202` означает, что просьба принята: синхронизация идёт фоном, её результат
+// в этот ответ не попадает.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /catalog/refresh (the `RefreshCatalog` operationId).
+func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogResponse, error) {
+	rsp, err := c.RefreshCatalog(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshCatalogResponse(rsp)
+}
+
 // ListMenuWithResponse Меню заведения (реализует заведение)
 //
 // Постраничная выдача меню. Площадка забирает меню целиком, страницу за страницей, и
@@ -1181,6 +1662,82 @@ func (c *ClientWithResponses) CancelAcceptedOrderWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseCancelAcceptedOrderResponse(rsp)
+}
+
+// NotifyOrderStatusWithBodyWithResponse Уведомить о смене статуса заказа (предоставляет площадка)
+//
+// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+// делает: инициатива на стороне заведения.
+//
+// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+// по нему заведение видит, применилось ли уведомление.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+func (c *ClientWithResponses) NotifyOrderStatusWithBodyWithResponse(ctx context.Context, orderId OrderId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*NotifyOrderStatusResponse, error) {
+	rsp, err := c.NotifyOrderStatusWithBody(ctx, orderId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseNotifyOrderStatusResponse(rsp)
+}
+
+// NotifyOrderStatusWithResponse Уведомить о смене статуса заказа (предоставляет площадка)
+//
+// Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+// делает: инициатива на стороне заведения.
+//
+// Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+// принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+// по нему заведение видит, применилось ли уведомление.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /orders/{orderId}/status (the `NotifyOrderStatus` operationId).
+func (c *ClientWithResponses) NotifyOrderStatusWithResponse(ctx context.Context, orderId OrderId, body NotifyOrderStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*NotifyOrderStatusResponse, error) {
+	rsp, err := c.NotifyOrderStatus(ctx, orderId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseNotifyOrderStatusResponse(rsp)
+}
+
+// ParseRefreshCatalogResponse parses an HTTP response from a RefreshCatalogWithResponse call
+func ParseRefreshCatalogResponse(rsp *http.Response) (*RefreshCatalogResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RefreshCatalogResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListMenuResponse parses an HTTP response from a ListMenuWithResponse call
@@ -1318,6 +1875,60 @@ func ParseCancelAcceptedOrderResponse(rsp *http.Response) (*CancelAcceptedOrderR
 			return nil, err
 		}
 		response.ApplicationproblemJSON413 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseNotifyOrderStatusResponse parses an HTTP response from a NotifyOrderStatusWithResponse call
+func ParseNotifyOrderStatusResponse(rsp *http.Response) (*NotifyOrderStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &NotifyOrderStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OrderStatusState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	}
 

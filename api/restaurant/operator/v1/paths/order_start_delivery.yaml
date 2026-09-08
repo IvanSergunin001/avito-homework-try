@@ -1,0 +1,26 @@
+post:
+  operationId: startDelivery
+  summary: Отправить заказ в доставку
+  description: |
+    Заказ приготовлен и уехал к покупателю. Площадка узнаёт об этом уведомлением и
+    показывает статус покупателю.
+
+    Отправить в доставку можно только готовящийся заказ: ступень пути не
+    перепрыгивается, и заказ в любом другом состоянии отвечает `409`.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters.yaml#/OrderId'
+  responses:
+    '200':
+      description: Заказ в доставке.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../components/responses.yaml#/OrderNotFound'
+    '409':
+      $ref: '../components/responses.yaml#/TransitionNotAllowed'

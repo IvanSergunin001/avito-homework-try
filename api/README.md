@@ -26,7 +26,7 @@
 | `customer/v1/codegen-client.yaml` | клиент клиентского API | `api/customer/v1` |
 | `partner/v1/codegen-server-platform.yaml` | серверный интерфейс площадки (тег `platform`) | `internal/platform/adapters/http/partner_v1` |
 | `partner/v1/codegen-server-restaurant.yaml` | серверный интерфейс коробки (тег `restaurant`) | `internal/restaurant/adapters/http/partner_v1` |
-| `partner/v1/codegen-client.yaml` | клиент партнёрского контракта | `api/partner/v1` |
+| `partner/v1/codegen-client.yaml` | клиент партнёрского контракта, обе стороны | `api/partner/v1` |
 | `admin/v1/codegen-server.yaml` | серверный интерфейс админского API | `internal/platform/adapters/http/admin_v1` |
 | `restaurant/operator/v1/codegen-server.yaml` | серверный интерфейс рабочего места оператора | `internal/restaurant/adapters/http/operator_v1` |
 

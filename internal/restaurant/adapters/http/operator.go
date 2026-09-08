@@ -296,6 +296,7 @@ func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	var (
 		invalidItem  domain.InvalidMenuItemError
 		invalidOrder domain.InvalidOrderError
+		transition   domain.OrderTransitionError
 		bad          badRequestError
 	)
 
@@ -309,6 +310,13 @@ func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrOrderNotUnderReview):
 		writeOperatorProblem(w, r, http.StatusConflict, operator_v1.ProblemCodeOrderNotUnderReview,
 			"Заказ уже не на рассмотрении", "решение по этому заказу принято раньше")
+	case errors.As(err, &transition):
+		// Переход, которого на пути заказа нет, — это доменный конфликт, а не неверный
+		// запрос: запрос составлен по спецификации, просто заказ уже не там, где его
+		// увидел оператор. В `detail` — обе стороны перехода: по ним видно, опередил ли
+		// его сосед с другого рабочего места.
+		writeOperatorProblem(w, r, http.StatusConflict, operator_v1.ProblemCodeTransitionNotAllowed,
+			"Недопустимый переход", transition.Error())
 	case errors.As(err, &bad):
 		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
 			"Некорректный запрос", bad.reason)

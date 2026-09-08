@@ -107,8 +107,8 @@ func TestMenuRefusesPageLargerThanContractAllows(t *testing.T) {
 	if resp.ApplicationproblemJSON400 == nil {
 		t.Fatalf("меню вернуло %d, ожидали 400: %s", resp.HTTPResponse.StatusCode, resp.Body)
 	}
-	if code := resp.ApplicationproblemJSON400.Code; code != partner.ValidationFailed {
-		t.Errorf("код отказа %q, ожидали %q", code, partner.ValidationFailed)
+	if code := resp.ApplicationproblemJSON400.Code; code != partner.ProblemCodeValidationFailed {
+		t.Errorf("код отказа %q, ожидали %q", code, partner.ProblemCodeValidationFailed)
 	}
 	if status := resp.ApplicationproblemJSON400.Status; status != http.StatusBadRequest {
 		t.Errorf("в теле отказа status=%d, ожидали 400", status)
@@ -122,8 +122,8 @@ func TestMenuRefusesPageSizeThatIsNotANumber(t *testing.T) {
 
 	document := asRefusal(t, newBox(t).get(t, contractMenu+"?limit=неполное"), http.StatusBadRequest)
 
-	if document.Code != string(partner.ValidationFailed) {
-		t.Errorf("код отказа %q, ожидали %q", document.Code, partner.ValidationFailed)
+	if document.Code != string(partner.ProblemCodeValidationFailed) {
+		t.Errorf("код отказа %q, ожидали %q", document.Code, partner.ProblemCodeValidationFailed)
 	}
 }
 
@@ -351,8 +351,8 @@ func TestRequestBodyLargerThanTheLimitIsRefusedByTheBox(t *testing.T) {
 	document := asRefusal(t, newBox(t).do(t, http.MethodPost,
 		restauranthttp.PartnerAPIPrefix+"/orders", oversized, nil), http.StatusRequestEntityTooLarge)
 
-	if document.Code != string(partner.ValidationFailed) {
-		t.Errorf("код отказа %q, ожидали %q", document.Code, partner.ValidationFailed)
+	if document.Code != string(partner.ProblemCodeValidationFailed) {
+		t.Errorf("код отказа %q, ожидали %q", document.Code, partner.ProblemCodeValidationFailed)
 	}
 	if document.Status != http.StatusRequestEntityTooLarge {
 		t.Errorf("в теле отказа status=%d, ожидали 413", document.Status)

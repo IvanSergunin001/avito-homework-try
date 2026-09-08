@@ -67,6 +67,40 @@ func (a operatorAPI) ConfirmOrder(w http.ResponseWriter, r *http.Request, orderI
 	a.writeOrder(w, r, order)
 }
 
+// StartCooking — оператор отправляет подтверждённый заказ в готовку.
+func (a operatorAPI) StartCooking(w http.ResponseWriter, r *http.Request, orderID operator_v1.OrderId) {
+	a.advance(w, r, orderID, domain.Cooking)
+}
+
+// StartDelivery — заказ приготовлен и уехал к покупателю.
+func (a operatorAPI) StartDelivery(w http.ResponseWriter, r *http.Request, orderID operator_v1.OrderId) {
+	a.advance(w, r, orderID, domain.Delivering)
+}
+
+// CompleteOrder — заказ доставлен покупателю.
+func (a operatorAPI) CompleteOrder(w http.ResponseWriter, r *http.Request, orderID operator_v1.OrderId) {
+	a.advance(w, r, orderID, domain.Completed)
+}
+
+// advance двигает заказ в названное состояние.
+//
+// Обработчики трёх кнопок отличаются только состоянием: одна и та же ручка со статусом в
+// теле дала бы клиенту право назвать любое значение, включая те, которых на пути нет, —
+// и рабочее место разбирало бы этот случай вместо того, чтобы его не иметь. Правила
+// перехода здесь не проверяются вовсе: можно ли заказу отсюда туда, решает его агрегат.
+func (a operatorAPI) advance(
+	w http.ResponseWriter, r *http.Request, orderID operator_v1.OrderId, to domain.OrderStatus,
+) {
+	order, err := a.orders.Advance(r.Context(), orderID, to)
+	if err != nil {
+		a.refuse(w, r, err)
+
+		return
+	}
+
+	a.writeOrder(w, r, order)
+}
+
 // RejectOrder — заведение не берётся за заказ и объясняет причину.
 func (a operatorAPI) RejectOrder(w http.ResponseWriter, r *http.Request, orderID operator_v1.OrderId) {
 	var body operator_v1.Rejection
@@ -151,6 +185,12 @@ func operatorStatus(status domain.OrderStatus) (operator_v1.OrderStatus, bool) {
 		return operator_v1.UnderReview, true
 	case domain.Confirmed:
 		return operator_v1.Confirmed, true
+	case domain.Cooking:
+		return operator_v1.Cooking, true
+	case domain.Delivering:
+		return operator_v1.Delivering, true
+	case domain.Completed:
+		return operator_v1.Completed, true
 	case domain.Cancelled:
 		return operator_v1.Cancelled, true
 	default:

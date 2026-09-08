@@ -107,6 +107,7 @@ ProblemCode:
     - product_not_found
     - order_not_found
     - order_not_under_review
+    - transition_not_allowed
     - menu_item_not_found
     - out_of_stock
     - price_changed
