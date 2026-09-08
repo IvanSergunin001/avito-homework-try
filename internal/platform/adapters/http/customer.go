@@ -49,6 +49,7 @@ const (
 type customerAPI struct {
 	showcase *application.Showcase
 	catalog  *application.Catalog
+	ordering *application.Ordering
 	log      *slog.Logger
 }
 
@@ -56,9 +57,13 @@ type customerAPI struct {
 // сгенерирован по спецификации: руками он не переписывается и разойтись с контрактом
 // не может.
 func mountCustomerAPI(
-	r chi.Router, showcase *application.Showcase, catalog *application.Catalog, log *slog.Logger,
+	r chi.Router,
+	showcase *application.Showcase,
+	catalog *application.Catalog,
+	ordering *application.Ordering,
+	log *slog.Logger,
 ) {
-	api := customerAPI{showcase: showcase, catalog: catalog, log: log}
+	api := customerAPI{showcase: showcase, catalog: catalog, ordering: ordering, log: log}
 
 	handler := customer_v1.NewStrictHandlerWithOptions(api, nil, customer_v1.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  customerProblems.BadRequest,
@@ -213,18 +218,6 @@ func (a customerAPI) GetProduct(
 }
 
 // Операции ниже описаны контрактом, но их обработчики подставляются своими этапами.
-
-func (customerAPI) PlaceOrder(
-	context.Context, customer_v1.PlaceOrderRequestObject,
-) (customer_v1.PlaceOrderResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
-}
-
-func (customerAPI) GetOrder(
-	context.Context, customer_v1.GetOrderRequestObject,
-) (customer_v1.GetOrderResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
-}
 
 func (customerAPI) CancelOrder(
 	context.Context, customer_v1.CancelOrderRequestObject,

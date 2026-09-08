@@ -42,10 +42,11 @@ var staffMember = uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1aff")
 // заведение по адресу поднятой заглушки — см. `catalog_sync_test.go`.
 const boxAddress = "http://box.test:8081"
 
-// syncTimeout — сколько площадка, поднятая для теста, ждёт заведение, забирая у него
-// меню. Настоящий берётся из конфигурации службы; здесь он такой же по смыслу — предел
-// ожидания стороннего заведения, — но короче, чтобы тест не ждал вместе с ней.
-const syncTimeout = 5 * time.Second
+// boxTimeout — сколько площадка, поднятая для теста, ждёт заведение: и когда забирает у
+// него меню, и когда передаёт ему заказ. Настоящие пределы берутся из конфигурации службы
+// и различаются; здесь они такие же по смыслу — предел ожидания стороннего заведения, —
+// но короче, чтобы тест не ждал вместе с ней.
+const boxTimeout = 5 * time.Second
 
 // platform — площадка, поднятая целиком для одного теста.
 type platform struct {
@@ -65,13 +66,13 @@ type platform struct {
 func newPlatform(t *testing.T) *platform {
 	t.Helper()
 
-	return newPlatformWaitingForBox(t, syncTimeout)
+	return newPlatformWaitingForBox(t, boxTimeout)
 }
 
 // newPlatformWaitingForBox поднимает площадку, которая ждёт ответа заведения не дольше
-// waitForBox. Отдельный помощник нужен ровно одному правилу — «заведение, которое не
-// отвечает, не держит синхронизацию вечно», — и проверять его общим для всех тестов
-// пределом значило бы ждать вместе с площадкой пять секунд на каждом прогоне.
+// waitForBox. Отдельный помощник нужен правилам про молчащее заведение — «оно не держит
+// синхронизацию вечно» и «оно не держит вечно покупателя», — и проверять их общим для
+// всех тестов пределом значило бы ждать вместе с площадкой пять секунд на каждом прогоне.
 func newPlatformWaitingForBox(t *testing.T, waitForBox time.Duration) *platform {
 	t.Helper()
 
@@ -79,7 +80,8 @@ func newPlatformWaitingForBox(t *testing.T, waitForBox time.Duration) *platform 
 
 	// Логи службы в тестах никому не нужны, но middleware, которое их пишет, остаётся
 	// на месте: шов проверяется вместе со всей обвязкой, а не в обход неё.
-	router, _ := platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB, waitForBox)
+	router, _ := platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB,
+		platformhttp.BoxTimeouts{CatalogSync: waitForBox, OrderPlacement: waitForBox})
 
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
@@ -117,17 +119,14 @@ func (p *platform) do(t *testing.T, method, path, key string, body []byte) respo
 		payload = bytes.NewReader(body)
 	}
 
-	return p.send(t, method, path, key, payload)
+	return p.send(t, p.request(t, method, path, key, payload))
 }
 
-// send выполняет запрос телом из произвольного источника и возвращает прочитанный ответ.
-// Отдельно от `do` он нужен там, где важно, каким источником уходит тело: из `*bytes.Reader`
-// клиент вычисляет длину и объявляет её сам, а из голого io.Reader — не может (см.
-// postWithoutDeclaredLength). Через `prepare` вызывающий дописывает запросу заголовки,
-// которых общий путь не знает.
-func (p *platform) send(
-	t *testing.T, method, path, key string, body io.Reader, prepare ...func(*http.Request),
-) response {
+// request собирает запрос к площадке. Отдельно от `do` он нужен там, где важно, каким
+// источником уходит тело: из `*bytes.Reader` клиент вычисляет длину и объявляет её сам, а
+// из голого io.Reader — не может (см. postWithoutDeclaredLength). Заголовки сверх общих
+// дописывает вызывающий: собранный запрос он получает в руки.
+func (p *platform) request(t *testing.T, method, path, key string, body io.Reader) *http.Request {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), method, p.srv.URL+path, body)
@@ -140,19 +139,24 @@ func (p *platform) send(
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
-	for _, apply := range prepare {
-		apply(req)
-	}
+
+	return req
+}
+
+// send выполняет собранный запрос и возвращает прочитанный ответ. Собирают запрос
+// помощники — им и решать, какими заголовками поверхность отличает звонящего.
+func (p *platform) send(t *testing.T, req *http.Request) response {
+	t.Helper()
 
 	resp, err := p.srv.Client().Do(req)
 	if err != nil {
-		t.Fatalf("запрос %s %s: %v", method, path, err)
+		t.Fatalf("запрос %s %s: %v", req.Method, req.URL.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	read, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("прочитать ответ %s %s: %v", method, path, err)
+		t.Fatalf("прочитать ответ %s %s: %v", req.Method, req.URL.Path, err)
 	}
 
 	return response{
@@ -250,10 +254,10 @@ func (p *platform) post(t *testing.T, path string, body []byte) response {
 func (p *platform) postWithoutDeclaredLength(t *testing.T, path string, body []byte) response {
 	t.Helper()
 
-	return p.send(t, http.MethodPost, path, "", struct{ io.Reader }{bytes.NewReader(body)},
-		func(r *http.Request) {
-			r.Header.Set("User-Id", uuid.New().String())
-		})
+	req := p.request(t, http.MethodPost, path, "", struct{ io.Reader }{bytes.NewReader(body)})
+	req.Header.Set("User-Id", uuid.New().String())
+
+	return p.send(t, req)
 }
 
 // registration — подключённое заведение вместе с тем, что площадка сообщила о нём один
