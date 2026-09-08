@@ -80,6 +80,28 @@ func (a customerAPI) GetOrder(
 	httpx.WriteJSON(r.Context(), w, http.StatusOK, orderDocument(order))
 }
 
+// CancelOrder отменяет заказ по требованию покупателя.
+//
+// Тела у запроса нет: причину покупатель не называет — он передумал, и объяснять это
+// никому не обязан. Ответ — сам заказ: по нему видно и то, что он отменён, и то, кем, —
+// если отмена случилась раньше и не по воле покупателя.
+//
+// Повторная отмена отвечает тем же `200` и тем же заказом: ретрай кнопки «Отменить» не
+// должен ломаться. Заказ, который уже готовят, отменить нельзя — `409` с кодом
+// `order_not_cancellable`: продукты потрачены, и такие случаи разбирает саппорт.
+func (a customerAPI) CancelOrder(
+	w http.ResponseWriter, r *http.Request, orderID customer_v1.OrderId, params customer_v1.CancelOrderParams,
+) {
+	order, err := a.cancellation.ByCustomer(r.Context(), orderID, params.UserId)
+	if err != nil {
+		a.refuseOrder(w, r, err)
+
+		return
+	}
+
+	httpx.WriteJSON(r.Context(), w, http.StatusOK, orderDocument(order))
+}
+
 // decodeOrderBody разбирает тело запроса заказа и переводит отказ разбора в ошибку
 // предметной области: причину читает разработчик клиента, и отвечает ему та же ветка, что
 // и на неверно описанный заказ.
@@ -97,6 +119,7 @@ func (a customerAPI) refuseOrder(w http.ResponseWriter, r *http.Request, err err
 	var (
 		invalid     domain.InvalidOrderError
 		refused     domain.OrderRefusedError
+		transition  domain.OrderTransitionError
 		unavailable application.RestaurantUnavailableError
 	)
 
@@ -115,6 +138,15 @@ func (a customerAPI) refuseOrder(w http.ResponseWriter, r *http.Request, err err
 			"Заказ не найден", "заказа с таким идентификатором у вас нет")
 	case errors.As(err, &refused):
 		a.refuseByTheRestaurant(w, r, refused)
+	case errors.As(err, &transition) && transition.To == domain.Cancelled:
+		// Единственный переход, которого требует покупатель, — отмена: других ручек,
+		// двигающих заказ, на клиентской поверхности нет. Отказ матрицы в ней означает
+		// одно и то же: заказ уже готовят, и продукты на него потрачены. Названный
+		// переход в условии — не перестраховка: отказ в каком-нибудь другом переходе
+		// был бы поломкой самой площадки, и выдавать её покупателю за правило нельзя.
+		writeCustomerProblem(w, r, http.StatusConflict, customer_v1.OrderNotCancellable,
+			"Заказ уже нельзя отменить",
+			"заведение начало готовить заказ: продукты потрачены — обратитесь в поддержку")
 	case errors.Is(err, domain.ErrIdempotencyKeyReuse):
 		writeCustomerProblem(w, r, http.StatusUnprocessableEntity, customer_v1.IdempotencyKeyReuse,
 			"Идентификатор заказа уже использован",

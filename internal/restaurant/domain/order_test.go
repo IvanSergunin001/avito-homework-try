@@ -466,6 +466,97 @@ func TestCancelledOrderIsNotMovedAnyFurther(t *testing.T) {
 	}
 }
 
+// orderIn доводит принятый заказ до нужного состояния теми же переходами, какими он
+// проходит их на кухне: подставить состояние снаружи нельзя — его меняет только сам
+// заказ, и это же свойство делает помощник честным.
+func orderIn(t *testing.T, status domain.OrderStatus) domain.Order {
+	t.Helper()
+
+	order := underReview(t)
+	if status == domain.UnderReview {
+		return order
+	}
+
+	for {
+		next, ok := order.Next()
+		if !ok {
+			t.Fatalf("состояние %q не лежит на пути заказа", status)
+		}
+		if err := order.Advance(next); err != nil {
+			t.Fatalf("довести заказ до %q: %v", status, err)
+		}
+		if next == status {
+			return order
+		}
+	}
+}
+
+func TestPlatformCancelsTheOrderUntilTheKitchenStartsCooking(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []domain.OrderStatus{domain.UnderReview, domain.Confirmed} {
+		order := orderIn(t, status)
+
+		cancelled, err := order.CancelOnRequest("Отмена по просьбе покупателя")
+		if err != nil {
+			t.Errorf("коробка не отменила заказ в состоянии %q: %v — продукты ещё не потрачены",
+				status, err)
+
+			continue
+		}
+		if !cancelled {
+			t.Errorf("отмена заказа в состоянии %q не объявлена изменением, а заказ был живым", status)
+		}
+		if order.Status != domain.Cancelled {
+			t.Errorf("статус отменённого заказа %q, ожидали %q", order.Status, domain.Cancelled)
+		}
+		if order.CancellationReason != "Отмена по просьбе покупателя" {
+			t.Errorf("причина отмены %q: её читает оператор, у которого забрали заказ",
+				order.CancellationReason)
+		}
+	}
+}
+
+func TestOrderTheKitchenAlreadyStartedIsNotCancelledByThePlatform(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []domain.OrderStatus{domain.Cooking, domain.Delivering, domain.Completed} {
+		order := orderIn(t, status)
+
+		if _, err := order.CancelOnRequest(""); !errors.Is(err, domain.ErrOrderNotCancellable) {
+			t.Errorf("отмена заказа в состоянии %q вернула %v, ожидали отказ: продукты потрачены, "+
+				"и такой случай разбирает саппорт площадки", status, err)
+		}
+		if order.Status != status {
+			t.Errorf("отказанная отмена всё же изменила статус на %q", order.Status)
+		}
+	}
+}
+
+func TestRepeatedRequestToCancelAnAlreadyCancelledOrderChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	order := underReview(t)
+	if err := order.Reject("Закончились продукты"); err != nil {
+		t.Fatalf("отказ оператора не прошёл: %v", err)
+	}
+
+	// Площадка повторяет просьбу, не получив ответа: отказом это не является — заказ
+	// отменён, — а переписывать причину, которую покупателю уже показали, повтор не
+	// должен.
+	cancelled, err := order.CancelOnRequest("Отмена по просьбе покупателя")
+	if err != nil {
+		t.Fatalf("повторная просьба отменить отказана: %v", err)
+	}
+	if cancelled {
+		t.Error("повторная отмена объявлена изменением заказа: продукты вернулись бы в меню дважды")
+	}
+	if order.CancellationReason != "Закончились продукты" {
+		t.Errorf("причина отмены %q: повтор переписал причину, которую видит покупатель",
+			order.CancellationReason)
+	}
+}
+
 func TestEveryStatusOnTheWayIsCountedAsStillInWork(t *testing.T) {
 	t.Parallel()
 

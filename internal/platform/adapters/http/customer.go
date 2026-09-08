@@ -44,10 +44,11 @@ const (
 type customerAPI struct {
 	customer_v1.Unimplemented
 
-	showcase *application.Showcase
-	catalog  *application.Catalog
-	ordering *application.Ordering
-	log      *slog.Logger
+	showcase     *application.Showcase
+	catalog      *application.Catalog
+	ordering     *application.Ordering
+	cancellation *application.Cancellation
+	log          *slog.Logger
 }
 
 // mountCustomerAPI монтирует клиентскую поверхность на роутер площадки. Список маршрутов
@@ -58,9 +59,13 @@ func mountCustomerAPI(
 	showcase *application.Showcase,
 	catalog *application.Catalog,
 	ordering *application.Ordering,
+	cancellation *application.Cancellation,
 	log *slog.Logger,
 ) {
-	api := customerAPI{showcase: showcase, catalog: catalog, ordering: ordering, log: log}
+	api := customerAPI{
+		showcase: showcase, catalog: catalog, ordering: ordering,
+		cancellation: cancellation, log: log,
+	}
 
 	// Лимит тела вешается на поверхность, а не на весь роутер: отказ отдаётся по схеме
 	// клиентской спецификации, а у партнёрской и админской поверхностей схема своя.

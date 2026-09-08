@@ -19,8 +19,8 @@ import (
 // только то, что в ней вынесено в адрес сервера.
 const adminBaseURL = "/api/admin/v1"
 
-// adminAPI обслуживает админскую поверхность площадки: подключение заведений и правку их
-// реквизитов.
+// adminAPI обслуживает админскую поверхность площадки: подключение заведений, правку их
+// реквизитов и отмену заказа саппортом.
 //
 // Встроенная сгенерированная заглушка отвечает `501` на операции, до которых очередь ещё
 // не дошла: маршрут существует потому, что существует контракт, а обработчик
@@ -28,15 +28,19 @@ const adminBaseURL = "/api/admin/v1"
 type adminAPI struct {
 	admin_v1.Unimplemented
 
-	onboarding *application.Onboarding
-	log        *slog.Logger
+	onboarding   *application.Onboarding
+	cancellation *application.Cancellation
+	log          *slog.Logger
 }
 
 // mountAdminAPI монтирует админскую поверхность на роутер площадки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с контрактом не может.
-func mountAdminAPI(r chi.Router, access guard, onboarding *application.Onboarding, log *slog.Logger) {
-	api := adminAPI{onboarding: onboarding, log: log}
+func mountAdminAPI(
+	r chi.Router, access guard, onboarding *application.Onboarding,
+	cancellation *application.Cancellation, log *slog.Logger,
+) {
+	api := adminAPI{onboarding: onboarding, cancellation: cancellation, log: log}
 
 	r.Group(func(r chi.Router) {
 		// Проверка токена стоит перед всем остальным, включая разбор тела: посторонний не

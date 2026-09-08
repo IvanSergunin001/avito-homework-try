@@ -95,8 +95,6 @@ func (o *Orders) Add(ctx context.Context, order domain.Order) (domain.Order, boo
 }
 
 // findOrder отдаёт заказ по одному лишь идентификатору — тем ключом, который занят.
-// Читать так заказ можно только здесь: всё остальное спрашивает заказ вместе с тем, кому
-// он виден.
 func findOrder(ctx context.Context, tx *sql.Tx, id uuid.UUID) (domain.Order, error) {
 	row := tx.QueryRowContext(ctx, `SELECT `+orderColumns+` FROM platform.orders WHERE id = $1`, id)
 
@@ -175,6 +173,26 @@ func recordStatusChanges(ctx context.Context, tx *sql.Tx, order domain.Order) er
 	}
 
 	return nil
+}
+
+// Find отдаёт заказ по одному лишь идентификатору, кому бы он ни принадлежал.
+//
+// Так заказ читает единственный сценарий — отмена через саппорта: обращение о заказе
+// приходит к нему от заведения, и покупателя, вместе с которым заказ полагается
+// спрашивать, у саппорта на руках нет. Открыт этот путь ровно там, где его закрывает
+// админский токен; всё остальное читает заказ вместе с тем, кому он виден.
+func (o *Orders) Find(ctx context.Context, id uuid.UUID) (domain.Order, error) {
+	row := o.db.QueryRowContext(ctx, `SELECT `+orderColumns+` FROM platform.orders WHERE id = $1`, id)
+
+	order, err := scanOrder(row)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return domain.Order{}, domain.ErrOrderNotFound
+	case err != nil:
+		return domain.Order{}, fmt.Errorf("прочитать заказ %s: %w", id, err)
+	}
+
+	return order, nil
 }
 
 // FindForCustomer отдаёт заказ, принадлежащий этому покупателю.
