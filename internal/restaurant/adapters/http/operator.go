@@ -27,26 +27,29 @@ const (
 	operatorDefaultPageSize = 20
 	operatorMaxPageSize     = 100
 
-	// maxRequestBodyBytes — потолок на тело входящего запроса. Позиция меню — это
-	// название, описание и два числа, и мегабайта ей хватает с запасом; всё, что больше,
-	// коробка не разбирает, а отклоняет: тело неограниченного размера читается в память
-	// до того, как хоть одно правило предметной области успеет сказать, что запрос неверен.
+	// maxRequestBodyBytes — потолок на тело входящего запроса, общий для обеих
+	// поверхностей коробки. Позиция меню — это название, описание и два числа, заказ —
+	// адрес и сотня позиций корзины, и мегабайта хватает и тому, и другому с запасом;
+	// всё, что больше, коробка не разбирает, а отклоняет: тело неограниченного размера
+	// читается в память до того, как хоть одно правило предметной области успеет сказать,
+	// что запрос неверен.
 	maxRequestBodyBytes = 1 << 20
 )
 
-// operatorAPI — рабочее место оператора заведения: меню, стоп-лист и остатки. Это то,
-// чем заведение без своих систем заменяет собственный бэкенд, — площадка об этой
-// поверхности не знает и видит только партнёрскую выдачу меню.
+// operatorAPI — рабочее место оператора заведения: меню, стоп-лист, остатки и входящие
+// заказы. Это то, чем заведение без своих систем заменяет собственный бэкенд, — площадка
+// об этой поверхности не знает и видит только партнёрскую выдачу меню и свои заказы.
 type operatorAPI struct {
-	menu *application.Menu
-	log  *slog.Logger
+	menu   *application.Menu
+	orders *application.Orders
+	log    *slog.Logger
 }
 
 // mountOperatorAPI монтирует рабочее место оператора на роутер коробки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с ней не может.
-func mountOperatorAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
-	api := operatorAPI{menu: menu, log: log}
+func mountOperatorAPI(r chi.Router, menu *application.Menu, orders *application.Orders, log *slog.Logger) {
+	api := operatorAPI{menu: menu, orders: orders, log: log}
 
 	// Лимит тела вешается на поверхность, а не на весь роутер: отказ отдаётся по схеме
 	// спецификации рабочего места, а у партнёрского контракта схема своя. Он стоит перед
@@ -61,7 +64,7 @@ func mountOperatorAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
 			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
 			// `limit`. Спецификация обещает на них `problem+json`, а не текст по умолчанию.
 			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
+				writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
 					"Некорректные параметры запроса", err.Error())
 			},
 		})
@@ -74,7 +77,7 @@ func (a operatorAPI) ListMenuItems(
 ) {
 	paging, err := httpx.ResolvePaging(params.Limit, params.Offset, operatorDefaultPageSize, operatorMaxPageSize)
 	if err != nil {
-		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
 			"Некорректные параметры запроса", err.Error())
 
 		return
@@ -253,6 +256,18 @@ func describe(description *string) string {
 	return *description
 }
 
+// bodyError — тело запроса не разобрать или в нём нет обещанного поля. Ошибка транспорта,
+// а не предметной области: до правил дело не дошло, потому что читать нечего.
+type bodyError struct {
+	// Reason — что именно не так, словами.
+	Reason string
+}
+
+// Error возвращает причину отказа.
+func (e bodyError) Error() string {
+	return e.Reason
+}
+
 // decodeBody разбирает тело запроса и убеждается, что в нём есть перечисленные поля.
 //
 // Обязательность полей объявлена спецификацией, но кодогенератор её не проверяет, а у
@@ -266,22 +281,22 @@ func describe(description *string) string {
 func decodeBody(r *http.Request, body any, required ...string) error {
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
-		return domain.InvalidMenuItemError{Reason: "тело запроса: " + err.Error()}
+		return bodyError{Reason: "тело запроса: " + err.Error()}
 	}
 
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return domain.InvalidMenuItemError{Reason: "тело запроса: " + err.Error()}
+		return bodyError{Reason: "тело запроса: " + err.Error()}
 	}
 
 	for _, field := range required {
 		if _, ok := fields[field]; !ok {
-			return domain.InvalidMenuItemError{Reason: field + ": обязательное поле"}
+			return bodyError{Reason: field + ": обязательное поле"}
 		}
 	}
 
 	if err := json.Unmarshal(raw, body); err != nil {
-		return domain.InvalidMenuItemError{Reason: "тело запроса: " + err.Error()}
+		return bodyError{Reason: "тело запроса: " + err.Error()}
 	}
 
 	return nil
@@ -291,15 +306,31 @@ func decodeBody(r *http.Request, body any, required ...string) error {
 // отказала сама коробка. Разбор в одном месте — обработчики повторяют не разбор ошибок,
 // а только свой сценарий.
 func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
-	var invalid domain.InvalidMenuItemError
+	var (
+		invalidItem  domain.InvalidMenuItemError
+		invalidOrder domain.InvalidOrderError
+		badBody      bodyError
+	)
 
 	switch {
 	case errors.Is(err, domain.ErrMenuItemNotFound):
-		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.MenuItemNotFound,
+		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.ProblemCodeMenuItemNotFound,
 			"Позиция не найдена", "позиции с таким идентификатором в меню нет")
-	case errors.As(err, &invalid):
-		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
-			"Некорректный запрос", invalid.Reason)
+	case errors.Is(err, domain.ErrOrderNotFound):
+		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.ProblemCodeOrderNotFound,
+			"Заказ не найден", "заказа с таким идентификатором в коробке нет")
+	case errors.Is(err, domain.ErrOrderNotUnderReview):
+		writeOperatorProblem(w, r, http.StatusConflict, operator_v1.ProblemCodeOrderNotUnderReview,
+			"Заказ уже не на рассмотрении", "решение по этому заказу принято раньше")
+	case errors.As(err, &invalidItem):
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
+			"Некорректный запрос", invalidItem.Reason)
+	case errors.As(err, &invalidOrder):
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
+			"Некорректный запрос", invalidOrder.Reason)
+	case errors.As(err, &badBody):
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
+			"Некорректный запрос", badBody.Reason)
 	default:
 		// Причина уходит в лог, а не оператору: наружу она рассказала бы об устройстве
 		// службы, а выбрать по ней ветку поведения оператор всё равно не может — ему
@@ -320,7 +351,7 @@ func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
 // закрытом перечне спецификации нет. Заводить новый код ради размера тела незачем —
 // ветка поведения у клиента та же самая, что и при любом непринятом запросе.
 func (a operatorAPI) refuseOversizedBody(w http.ResponseWriter, r *http.Request) {
-	writeOperatorProblem(w, r, http.StatusRequestEntityTooLarge, operator_v1.ValidationFailed,
+	writeOperatorProblem(w, r, http.StatusRequestEntityTooLarge, operator_v1.ProblemCodeValidationFailed,
 		"Слишком большое тело запроса",
 		fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes))
 }

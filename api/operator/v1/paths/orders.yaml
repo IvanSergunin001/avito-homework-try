@@ -1,0 +1,23 @@
+get:
+  operationId: listOrders
+  summary: Входящие заказы
+  description: |
+    Постраничный список заказов, которые площадка передала коробке: состав, адрес
+    доставки и состояние. Свежие идут первыми — оператор работает с началом списка.
+
+    Заказы не пропадают из списка после решения: оператору нужно видеть, что он уже
+    подтвердил и от чего отказался, а не только то, что ждёт решения.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters/Limit.yaml'
+    - $ref: '../components/parameters/Offset.yaml'
+  responses:
+    '200':
+      description: Страница заказов.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrderPage.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'

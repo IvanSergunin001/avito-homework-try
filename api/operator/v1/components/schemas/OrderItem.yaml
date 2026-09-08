@@ -1,0 +1,27 @@
+type: object
+description: |
+  Позиция заказа — снимок на момент приёма: название и цена сохранены такими, какими
+  были, когда заказ приняли. Правка меню задним числом заказ не меняет: оператор готовит
+  то, что заказал покупатель, и по той цене, которую тот видел.
+required:
+  - menu_item_id
+  - name
+  - price
+  - quantity
+properties:
+  menu_item_id:
+    type: string
+    format: uuid
+    description: |
+      Позиция меню, из которой собран заказ. Позицию могли с тех пор изменить или удалить —
+      состав заказа от этого не меняется.
+    example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+    example: Круассан с миндалём
+  price:
+    $ref: 'Money.yaml'
+  quantity:
+    $ref: 'Quantity.yaml'

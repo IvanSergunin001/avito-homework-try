@@ -1,8 +1,11 @@
 package http
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -34,23 +37,35 @@ const (
 type partnerAPI struct {
 	partner_v1.Unimplemented
 
-	menu *application.Menu
-	log  *slog.Logger
+	menu   *application.Menu
+	orders *application.Orders
+	log    *slog.Logger
 }
 
 // mountPartnerAPI монтирует партнёрский контракт на роутер коробки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с контрактом не может.
-func mountPartnerAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
-	partner_v1.HandlerWithOptions(partnerAPI{menu: menu, log: log}, partner_v1.ChiServerOptions{
-		BaseURL:    partnerBaseURL,
-		BaseRouter: r,
-		// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
-		// `limit`. Контракт обещает на них `problem+json`, а не текст по умолчанию.
-		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			writePartnerProblem(w, r, http.StatusBadRequest, partner_v1.ValidationFailed,
-				"Некорректные параметры запроса", err.Error())
-		},
+func mountPartnerAPI(r chi.Router, menu *application.Menu, orders *application.Orders, log *slog.Logger) {
+	api := partnerAPI{menu: menu, orders: orders, log: log}
+
+	// Лимит тела вешается на поверхность, а не на весь роутер: отказ отдаётся по схеме
+	// партнёрского контракта, а у рабочего места оператора схема своя. Он стоит перед
+	// сгенерированными маршрутами, потому что размер тела — это то, что проверяется
+	// раньше всего остального: разбор параметров и тела уже читает запрос.
+	r.Group(func(r chi.Router) {
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, api.refuseOversizedBody))
+
+		partner_v1.HandlerWithOptions(api, partner_v1.ChiServerOptions{
+			BaseURL:    partnerBaseURL,
+			BaseRouter: r,
+			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
+			// `limit`, отсутствующий заголовок идемпотентности. Контракт обещает на них
+			// `problem+json`, а не текст по умолчанию.
+			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				refuseUnprocessableRequest(w, r, http.StatusBadRequest,
+					"Некорректные параметры запроса", err.Error())
+			},
+		})
 	})
 }
 
@@ -63,7 +78,7 @@ func mountPartnerAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
 func (a partnerAPI) ListMenu(w http.ResponseWriter, r *http.Request, params partner_v1.ListMenuParams) {
 	paging, err := httpx.ResolvePaging(params.Limit, params.Offset, menuDefaultPageSize, menuMaxPageSize)
 	if err != nil {
-		writePartnerProblem(w, r, http.StatusBadRequest, partner_v1.ValidationFailed,
+		refuseUnprocessableRequest(w, r, http.StatusBadRequest,
 			"Некорректные параметры запроса", err.Error())
 
 		return
@@ -122,16 +137,207 @@ func contractItem(item domain.MenuItem) partner_v1.MenuItem {
 	return contract
 }
 
-// writePartnerProblem отвечает отказом в схеме партнёрского контракта: тип сгенерирован
-// по нему же, поэтому тело ответа не может разойтись с тем, что обещано заведению.
-func writePartnerProblem(
-	w http.ResponseWriter, r *http.Request, status int, code partner_v1.ProblemCode, title, detail string,
-) {
+// refuseUnprocessableRequest отвечает площадке, что запрос не проходит проверку.
+//
+// Код причины у всех таких отказов один — `validation_failed`: в закрытом перечне
+// контракта другого на непринятый запрос нет, и заводить его незачем — ветка поведения у
+// площадки та же самая. Отказы по правилам предметной области собирают свой документ:
+// у них есть и причина, и позиция, из-за которой отказан заказ.
+func refuseUnprocessableRequest(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
 	problem.Write(r.Context(), w, status, partner_v1.Problem{
 		Type:   problem.DefaultType,
 		Title:  title,
 		Status: status,
 		Detail: &detail,
-		Code:   code,
+		Code:   partner_v1.ValidationFailed,
 	})
+}
+
+// AcceptOrder принимает заказ, переданный площадкой по контракту.
+//
+// Синхронная проверка: коробка — источник истины по наличию и цене, и успешный ответ
+// означает обязательство выполнить заказ, а не «мы посмотрим». Всё, что коробка выполнить
+// не может, отдаётся отказом с машиночитаемой причиной, по которой площадка выбирает
+// ветку поведения — обновить каталог, показать покупателю новую цену или увести его в
+// другое заведение.
+//
+// Повторная отправка того же заказа опознаётся по ключу идемпотентности: второй заказ не
+// заводится, остаток второй раз не списывается, а площадке отвечает результат первой
+// попытки — `200` вместо `201`. Номер попытки приходит заголовком контракта и уходит в
+// лог: по нему видно, что площадка ретраила и сколько раз, а поведение коробки от него не
+// зависит — иначе повтор с потерянным номером готовился бы заново.
+func (a partnerAPI) AcceptOrder(w http.ResponseWriter, r *http.Request, params partner_v1.AcceptOrderParams) {
+	var body partner_v1.IncomingOrder
+	if err := decodeBody(r, &body, "order_id", "address", "items", "total"); err != nil {
+		a.refuse(w, r, err)
+
+		return
+	}
+
+	items := make([]domain.RequestedItem, 0, len(body.Items))
+	for _, item := range body.Items {
+		items = append(items, domain.RequestedItem{
+			ExternalID: item.ExternalId,
+			Quantity:   item.Quantity,
+			Price:      domain.Money(item.Price),
+		})
+	}
+
+	request, err := domain.NewOrderRequest(body.OrderId, params.IdempotencyKey,
+		body.Address, items, domain.Money(body.Total), placedAt(body.PlacedAt))
+	if err != nil {
+		a.refuse(w, r, err)
+
+		return
+	}
+
+	order, accepted, err := a.orders.Accept(r.Context(), request)
+	if err != nil {
+		a.refuse(w, r, err)
+
+		return
+	}
+
+	a.log.InfoContext(r.Context(), "order delivered by platform",
+		slog.String("order_id", order.ID.String()),
+		slog.String("platform_order_id", order.PlatformOrderID.String()),
+		slog.Int("attempt", params.IdempotencyAttempt),
+		slog.Bool("accepted_now", accepted),
+	)
+
+	// Заказ, заведённый этой доставкой, — `201`; повтор — `200` с тем же телом: по коду
+	// ответа площадка видит, случилось ли что-то новое, а по телу — что именно у неё
+	// приняли.
+	status := http.StatusOK
+	if accepted {
+		status = http.StatusCreated
+	}
+
+	httpx.WriteJSON(r.Context(), w, status, partner_v1.OrderAcceptance{
+		// Наружу уезжает идентификатор заказа площадки, а не собственный идентификатор
+		// коробки: площадка сверяет ответ со своим заказом, а о внутренней нумерации
+		// заведения ей знать нечего.
+		OrderId:    order.PlatformOrderID,
+		AcceptedAt: order.AcceptedAt,
+	})
+}
+
+// placedAt приводит время оформления заказа к значению: площадка не обязана его
+// присылать, и «не сказали» здесь — это нулевое время, а не ошибка.
+func placedAt(moment *time.Time) time.Time {
+	if moment == nil {
+		return time.Time{}
+	}
+
+	return *moment
+}
+
+// refuse отвечает на ошибку приёма заказа: коробка не берётся за него, площадка прислала
+// сломанный вызов либо отказала сама коробка. Разбор в одном месте — обработчики
+// повторяют не разбор ошибок, а только свой сценарий.
+func (a partnerAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
+	var (
+		refusal domain.OrderRefusedError
+		invalid domain.InvalidOrderError
+		badBody bodyError
+	)
+
+	switch {
+	case errors.As(err, &refusal):
+		a.refuseOrder(w, r, refusal)
+	case errors.As(err, &invalid):
+		refuseUnprocessableRequest(w, r, http.StatusBadRequest, "Некорректный заказ", invalid.Reason)
+	case errors.As(err, &badBody):
+		refuseUnprocessableRequest(w, r, http.StatusBadRequest, "Некорректный заказ", badBody.Reason)
+	default:
+		a.refuseByOurFault(w, r, err)
+	}
+}
+
+// refuseOrder отвечает площадке отказом по правилам предметной области.
+//
+// Код ответа один на все причины — `409`: контракт обещает на приёме заказа только его,
+// и различает причины машиночитаемое поле `code`, а не код ответа. Позиция, из-за которой
+// отказан заказ, и её актуальная цена уезжают тем же документом: без них площадке
+// пришлось бы гадать, что чинить в каталоге.
+func (a partnerAPI) refuseOrder(w http.ResponseWriter, r *http.Request, refusal domain.OrderRefusedError) {
+	code, described := refusalCode(refusal.Reason)
+	if !described {
+		a.refuseByOurFault(w, r, refusal)
+
+		return
+	}
+
+	document := partner_v1.Problem{
+		Type:   problem.DefaultType,
+		Title:  refusalTitle(refusal.Reason),
+		Status: http.StatusConflict,
+		Detail: &refusal.Detail,
+		Code:   code,
+	}
+	if refusal.ProductExternalID != "" {
+		document.ProductExternalId = &refusal.ProductExternalID
+	}
+	if refusal.Reason == domain.PriceChanged {
+		price := int64(refusal.CurrentPrice)
+		document.CurrentPrice = &price
+	}
+
+	problem.Write(r.Context(), w, http.StatusConflict, document)
+}
+
+// refuseByOurFault отвечает на отказ по вине коробки.
+func (a partnerAPI) refuseByOurFault(w http.ResponseWriter, r *http.Request, err error) {
+	// Причина уходит в лог, а не площадке: наружу она рассказала бы об устройстве
+	// коробки, а выбрать по ней ветку поведения площадка всё равно не может — ей
+	// остаётся повторить доставку заказа с тем же ключом идемпотентности.
+	a.log.ErrorContext(r.Context(), "partner request failed", slog.Any("error", err))
+
+	problem.Write(r.Context(), w, http.StatusInternalServerError, internalProblem{
+		Type:   problem.DefaultType,
+		Title:  "Внутренняя ошибка",
+		Status: http.StatusInternalServerError,
+	})
+}
+
+// refuseOversizedBody отвечает на запрос, тело которого больше допустимого.
+func (a partnerAPI) refuseOversizedBody(w http.ResponseWriter, r *http.Request) {
+	refuseUnprocessableRequest(w, r, http.StatusRequestEntityTooLarge, "Слишком большое тело запроса",
+		fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes))
+}
+
+// refusalCode переводит причину отказа предметной области в код партнёрского контракта.
+//
+// Перевод явный, а не приведением строки: перечень кодов контракта закрыт, обе стороны
+// вправе разбирать его как перечисление, и причина, которой в контракте нет, — это
+// расхождение коробки с контрактом, а не ответ площадке.
+func refusalCode(reason domain.RefusalReason) (partner_v1.ProblemCode, bool) {
+	switch reason {
+	case domain.RestaurantClosed:
+		return partner_v1.RestaurantClosed, true
+	case domain.UnknownProduct:
+		return partner_v1.UnknownProduct, true
+	case domain.OutOfStock:
+		return partner_v1.OutOfStock, true
+	case domain.PriceChanged:
+		return partner_v1.PriceChanged, true
+	default:
+		return "", false
+	}
+}
+
+// refusalTitle — короткое название отказа для человека, который читает лог площадки.
+func refusalTitle(reason domain.RefusalReason) string {
+	switch reason {
+	case domain.RestaurantClosed:
+		return "Заведение закрыто"
+	case domain.UnknownProduct:
+		return "Неизвестная позиция"
+	case domain.OutOfStock:
+		return "Позиции нет в наличии"
+	case domain.PriceChanged:
+		return "Цена изменилась"
+	default:
+		return "Заказ не принят"
+	}
 }

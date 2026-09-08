@@ -1,0 +1,7 @@
+description: |
+  Заказ уже не на рассмотрении — его подтвердили или отклонили раньше:
+  `code` = `order_not_under_review`.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'

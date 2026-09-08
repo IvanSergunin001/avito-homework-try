@@ -1,0 +1,6 @@
+description: |
+  Заказа с таким идентификатором в коробке нет: `code` = `order_not_found`.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'

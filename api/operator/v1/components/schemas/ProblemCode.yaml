@@ -5,4 +5,6 @@ description: |
 enum:
   - validation_failed
   - menu_item_not_found
+  - order_not_found
+  - order_not_under_review
 example: validation_failed
