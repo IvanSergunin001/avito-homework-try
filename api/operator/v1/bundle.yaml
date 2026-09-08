@@ -12,9 +12,15 @@ info:
     заведения, площадке достаточно ответа «заказать можно или нельзя».
 
     Здесь же оператор разбирает входящие заказы: видит их состав и адрес, подтверждает
-    заказ или отклоняет его на этапе рассмотрения. Сами заказы приходят в коробку по
-    партнёрскому контракту, и решение оператора уезжает обратно площадке — рабочее место
-    не принимает заказы и не выдумывает их состав.
+    заказ или отклоняет его на этапе рассмотрения, а дальше ведёт его по пути — готовка,
+    доставка, завершение. Сами заказы приходят в коробку по партнёрскому контракту, и
+    решение оператора уезжает обратно площадке — рабочее место не принимает заказы и не
+    выдумывает их состав.
+
+    Путь заказа идёт в одну сторону и ступеней не перепрыгивает: подтверждён — готовится
+    — в доставке — завершён. Переход, которого на этом пути нет, отвечает `409`: заказ,
+    который «доставлен», ни разу не выехав, — это не состояние заведения, а расхождение
+    рабочего места с кухней.
 
     Позиция считается доступной, когда она не в стоп-листе и её остаток больше нуля.
     Признак `is_available` в ответах — тот же, что уезжает площадке: оператор видит
@@ -284,6 +290,88 @@ paths:
           $ref: '#/components/responses/OrderNotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /orders/{orderId}/start-cooking:
+    post:
+      operationId: startCooking
+      summary: Отправить заказ в готовку
+      description: |
+        Оператор берёт подтверждённый заказ в работу: на кухне начали готовить. Площадка
+        узнаёт об этом уведомлением и показывает статус покупателю.
+
+        Отправить в готовку можно только подтверждённый заказ: путь заказа идёт в одну
+        сторону, и перепрыгнуть ступень нельзя — заказ, который ещё не подтверждён или уже
+        уехал, отвечает `409`.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ готовится.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/TransitionNotAllowed'
+  /orders/{orderId}/start-delivery:
+    post:
+      operationId: startDelivery
+      summary: Отправить заказ в доставку
+      description: |
+        Заказ приготовлен и уехал к покупателю. Площадка узнаёт об этом уведомлением и
+        показывает статус покупателю.
+
+        Отправить в доставку можно только готовящийся заказ: ступень пути не
+        перепрыгивается, и заказ в любом другом состоянии отвечает `409`.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ в доставке.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/TransitionNotAllowed'
+  /orders/{orderId}/complete:
+    post:
+      operationId: completeOrder
+      summary: Завершить заказ
+      description: |
+        Заказ доставлен покупателю — это конец его пути: из завершённого заказа переходов
+        нет, и повторное завершение отвечает `409`.
+
+        Завершить можно только заказ в доставке: заказ, который ещё не уехал, доставленным
+        не бывает.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ завершён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/TransitionNotAllowed'
 components:
   parameters:
     Limit:
@@ -434,6 +522,7 @@ components:
         - menu_item_not_found
         - order_not_found
         - order_not_under_review
+        - transition_not_allowed
       example: validation_failed
     Problem:
       type: object
@@ -538,8 +627,12 @@ components:
       type: string
       description: |
         Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
-        ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
-        отклонил его на этапе рассмотрения.
+        ждёт решения оператора; `confirmed` — оператор взялся за него; `cooking` — заказ
+        готовится; `delivering` — уехал к покупателю; `completed` — доставлен; `cancelled` —
+        оператор отклонил его на этапе рассмотрения.
+
+        Путь заказа идёт в одну сторону: `under_review` → `confirmed` → `cooking` →
+        `delivering` → `completed`. `completed` и `cancelled` конечны — переходов из них нет.
 
         Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
         о котором коробка сообщает площадке, и заводить для одного и того же состояния два
@@ -547,6 +640,9 @@ components:
       enum:
         - under_review
         - confirmed
+        - cooking
+        - delivering
+        - completed
         - cancelled
       example: under_review
     Quantity:
@@ -694,6 +790,14 @@ components:
       description: |
         Заказ уже не на рассмотрении — его подтвердили или отклонили раньше:
         `code` = `order_not_under_review`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TransitionNotAllowed:
+      description: |
+        Заказ отсюда в это состояние не переходит: `code` = `transition_not_allowed`.
+        В `detail` — переход, которого потребовали.
       content:
         application/problem+json:
           schema:

@@ -53,6 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
  && go tool oapi-codegen -config api/codegen/platform_admin.yaml            api/admin/v1/bundle.yaml \
  && go tool oapi-codegen -config api/codegen/platform_restaurant_client.yaml api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/codegen/restaurant_partner.yaml        api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/codegen/restaurant_platform_client.yaml api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/codegen/restaurant_operator.yaml       api/operator/v1/bundle.yaml
 
 # --- артефакты генерации ------------------------------------------------------

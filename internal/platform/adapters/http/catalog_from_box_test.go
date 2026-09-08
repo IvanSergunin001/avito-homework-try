@@ -38,8 +38,11 @@ func (p *platform) openBox(t *testing.T) *operatorBox {
 	t.Helper()
 
 	// Часы работы коробке здесь безразличны: тест забирает у неё меню, а не заказывает.
-	srv := httptest.NewServer(restauranthttp.NewRouter(
-		logger.New(io.Discard, slog.LevelInfo), p.db.DB, boxdomain.AllDay()))
+	// Связь с площадкой ей тоже ни к чему — уведомлять её не о чем, заказов в этом тесте
+	// нет; фоновые работы коробки тест не запускает.
+	router, _ := restauranthttp.NewRouter(
+		logger.New(io.Discard, slog.LevelInfo), p.db.DB, restauranthttp.Settings{Hours: boxdomain.AllDay()})
+	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
 	return &operatorBox{srv: srv}

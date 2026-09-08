@@ -1,0 +1,11 @@
+# Клиент той половины партнёрского контракта, которую предоставляет площадка: им коробка
+# уведомляет площадку о смене статуса заказа. Берём операции с тегом `platform` — то, что
+# реализует площадка, а зовёт заведение.
+package: platform_client
+output: internal/restaurant/adapters/platform_client/client.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  include-tags:
+    - platform

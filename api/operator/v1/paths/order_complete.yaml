@@ -1,0 +1,26 @@
+post:
+  operationId: completeOrder
+  summary: Завершить заказ
+  description: |
+    Заказ доставлен покупателю — это конец его пути: из завершённого заказа переходов
+    нет, и повторное завершение отвечает `409`.
+
+    Завершить можно только заказ в доставке: заказ, который ещё не уехал, доставленным
+    не бывает.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters/OrderId.yaml'
+  responses:
+    '200':
+      description: Заказ завершён.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Order.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '404':
+      $ref: '../components/responses/OrderNotFound.yaml'
+    '409':
+      $ref: '../components/responses/TransitionNotAllowed.yaml'

@@ -7,4 +7,5 @@ enum:
   - menu_item_not_found
   - order_not_found
   - order_not_under_review
+  - transition_not_allowed
 example: validation_failed

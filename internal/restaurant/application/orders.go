@@ -41,13 +41,20 @@ type IncomingOrders interface {
 	// Page отдаёт окно списка заказов и общее их число.
 	Page(ctx context.Context, window Window) (OrderPage, error)
 
-	// Confirm применяет к заказу решение оператора взяться за него. Если заказа нет —
-	// domain.ErrOrderNotFound.
-	Confirm(ctx context.Context, id uuid.UUID, decide func(order *domain.Order) error) (domain.Order, error)
+	// Advance применяет к заказу решение оператора двигать его дальше — от согласия
+	// взяться за заказ до его завершения — и ставит уведомление площадке в очередь той же
+	// транзакцией. Если заказа нет — domain.ErrOrderNotFound.
+	Advance(ctx context.Context, id uuid.UUID, decide func(order *domain.Order) error) (domain.Order, error)
 
-	// Reject применяет к заказу отказ оператора и возвращает в меню списанные под заказ
-	// остатки. Если заказа нет — domain.ErrOrderNotFound.
+	// Reject применяет к заказу отказ оператора, возвращает в меню списанные под заказ
+	// остатки и ставит уведомление площадке в очередь — всё той же транзакцией. Если
+	// заказа нет — domain.ErrOrderNotFound.
 	Reject(ctx context.Context, id uuid.UUID, decide func(order *domain.Order) error) (domain.Order, error)
+
+	// InWork перечисляет заказы, которые находятся в одном из перечисленных состояний.
+	// Состояния приходят снаружи, а не выписаны в хранилище: какой заказ ещё двигается
+	// дальше, знает предметная область.
+	InWork(ctx context.Context, statuses []domain.OrderStatus) ([]uuid.UUID, error)
 }
 
 // Orders — входящие заказы коробки: приём по партнёрскому контракту и рассмотрение
@@ -98,8 +105,19 @@ func (o *Orders) Page(ctx context.Context, window Window) (OrderPage, error) {
 
 // Confirm — оператор берётся за заказ.
 func (o *Orders) Confirm(ctx context.Context, id uuid.UUID) (domain.Order, error) {
-	return o.orders.Confirm(ctx, id, func(order *domain.Order) error {
+	return o.orders.Advance(ctx, id, func(order *domain.Order) error {
 		return order.Confirm()
+	})
+}
+
+// Advance — оператор двигает заказ дальше по пути: в готовку, в доставку, в завершение.
+//
+// Состояние называется явно, а не выводится из текущего: оператор нажимает кнопку, глядя
+// на список, который мог устареть, — и «дальше» в этот момент означало бы не тот шаг,
+// который он видел. Допустим ли названный переход, решает сам заказ.
+func (o *Orders) Advance(ctx context.Context, id uuid.UUID, to domain.OrderStatus) (domain.Order, error) {
+	return o.orders.Advance(ctx, id, func(order *domain.Order) error {
+		return order.Advance(to)
 	})
 }
 

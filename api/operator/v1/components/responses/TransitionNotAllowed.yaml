@@ -1,0 +1,7 @@
+description: |
+  Заказ отсюда в это состояние не переходит: `code` = `transition_not_allowed`.
+  В `detail` — переход, которого потребовали.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'
