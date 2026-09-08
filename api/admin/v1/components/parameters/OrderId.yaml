@@ -1,0 +1,7 @@
+name: orderId
+in: path
+required: true
+description: Идентификатор заказа.
+schema:
+  type: string
+  format: uuid

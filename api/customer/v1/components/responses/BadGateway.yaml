@@ -1,0 +1,6 @@
+description: |
+  Заведение ответило неверно или недоступно: `code` = `restaurant_unavailable`.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'

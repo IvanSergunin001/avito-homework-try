@@ -1,0 +1,10 @@
+# Клиент партнёрского контракта: им площадка ходит в заведение. Берём ту половину
+# контракта, которую реализует заведение.
+package: restaurant_client
+output: internal/platform/adapters/restaurant_client/client.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  include-tags:
+    - restaurant

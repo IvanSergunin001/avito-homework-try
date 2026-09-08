@@ -1,0 +1,6 @@
+description: |
+  Сущности с таким идентификатором нет.
+content:
+  application/problem+json:
+    schema:
+      $ref: '../schemas/Problem.yaml'

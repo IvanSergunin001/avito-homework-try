@@ -1,0 +1,56 @@
+' C4 Level 3 — компоненты службы `restaurant` (коробка заведения). Исходник диаграммы;
+' картинка рождается из него командой `make diagrams`. Один компонент здесь — один пакет
+' или один сценарий в `internal/restaurant`, и подпись называет файл, в котором он живёт.
+@startuml c4_component_restaurant
+!include <C4/C4_Component>
+
+title Коробка заведения (restaurant) — C4 Level 3: компоненты
+
+Person(operator, "Оператор заведения", "Рабочее место, токеном не закрыто: внутренний контур заведения")
+System_Ext(platform, "Площадка Авито.Кухня", "Забирает меню, передаёт заказы, принимает уведомления о статусе")
+
+Container_Boundary(box, "restaurant — Go 1.27, chi") {
+    Component(httpx, "HTTP-обвязка", "internal/pkg/httpx", "Роутер chi: идентификатор запроса, лог, восстановление после паники, лимит тела, проба здоровья, ответы problem+json")
+
+    Component(partner_api, "Партнёрская поверхность", "adapters/http/partner.go", "/api/v1: то, что коробка обязана уметь по контракту — страничное меню, приём заказа, отмена заказа по просьбе площадки")
+    Component(operator_api, "Рабочее место оператора", "adapters/http/operator.go, operator_orders.go", "/api/operator/v1: сверх контракта — ведение меню, стоп-лист, остатки, входящие заказы и продвижение статусов")
+
+    Component(menu, "Меню", "application/menu.go", "Карточка позиции, стоп-лист и остаток правятся раздельно; доступность считается, а не хранится")
+    Component(orders, "Заказы", "application/orders.go", "Приём заказа с проверкой часов работы, наличия и цены, списание остатка, решение оператора и путь заказа по кухне")
+    Component(notifications, "Доставка уведомлений", "application/notifications.go", "Развозит очередь площадке: растущая пауза и ограниченное число попыток")
+    Component(autopilot, "Автопилот", "application/autopilot.go", "Двигает заказы по таймеру — переключатель демонстрации, по умолчанию выключен")
+
+    Component(order_aggregate, "Агрегат Order", "domain/order.go, notification.go", "Правила приёма и отказа, линейный путь по кухне, отмена и её граница, уведомление в очередь той же транзакцией")
+    Component(menu_domain, "Меню и расписание", "domain/menu.go, schedule.go", "Позиция с ценой и остатком, часы работы, политика повторов")
+
+    Component(store, "Хранилище", "adapters/postgres", "Позиции меню, входящие заказы и очередь уведомлений; заказ и уведомление о нём пишутся одной транзакцией")
+    Component(platform_client, "Клиент площадки", "adapters/platform_client", "Сгенерированный по партнёрской спецификации клиент уведомлений о смене статуса")
+}
+
+ContainerDb(db, "Схема restaurant", "PostgreSQL 18", "menu_items, orders, status_notifications")
+
+Rel(operator, httpx, "HTTPS /api/operator/v1, JSON")
+Rel(platform, httpx, "Меню, заказ, отмена", "HTTPS /api/v1 партнёрского контракта, Bearer")
+
+Rel(httpx, partner_api, "Маршрутизирует")
+Rel(httpx, operator_api, "Маршрутизирует")
+
+Rel(partner_api, menu, "Меню наружу — без остатка и отметки стоп-листа")
+Rel(partner_api, orders, "Приём заказа, отмена по просьбе площадки")
+Rel(operator_api, menu, "Ведение меню, стоп-лист, остаток")
+Rel(operator_api, orders, "Решение по заказу и продвижение статусов")
+
+Rel(orders, order_aggregate, "Правила заказа")
+Rel(menu, menu_domain, "Правила позиции")
+Rel(orders, menu_domain, "Часы работы, наличие и цена")
+Rel(notifications, menu_domain, "Политика повторов")
+
+Rel(menu, store, "")
+Rel(orders, store, "Заказ, списание остатка и уведомление — одной транзакцией")
+Rel(autopilot, orders, "Следующая ступень заказа")
+Rel(notifications, store, "Очередь уведомлений")
+Rel(store, db, "SQL", "database/sql")
+
+Rel(notifications, platform_client, "Недоставленное — с растущей паузой")
+Rel(platform_client, platform, "POST /api/partner/v1/orders/{id}/status", "HTTPS, Bearer")
+@enduml

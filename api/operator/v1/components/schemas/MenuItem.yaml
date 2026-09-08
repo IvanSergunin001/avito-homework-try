@@ -1,0 +1,41 @@
+type: object
+description: |
+  Позиция меню глазами оператора: карточка, остаток, отметка стоп-листа и итог —
+  доступна ли позиция площадке.
+required:
+  - id
+  - name
+  - price
+  - stock
+  - in_stop_list
+  - is_available
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Идентификатор позиции; он же — `external_id` партнёрского контракта.
+    example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+    example: Круассан с миндалём
+  description:
+    type: string
+    maxLength: 2000
+    example: Слоёное тесто, миндальный крем
+  price:
+    $ref: 'Money.yaml'
+  stock:
+    $ref: 'Stock.yaml'
+  in_stop_list:
+    type: boolean
+    description: Оператор отметил, что позиции сейчас нет.
+    example: false
+  is_available:
+    type: boolean
+    description: |
+      Итог, который видит площадка: позиция не в стоп-листе и её остаток больше нуля.
+      Значение вычисляется коробкой и в запросах не принимается — им управляют отметка
+      стоп-листа и остаток.
+    example: true

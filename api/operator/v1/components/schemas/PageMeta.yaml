@@ -1,0 +1,26 @@
+type: object
+description: |
+  Страница выдачи: смещение и размер, которые запросил оператор, плюс общее число записей
+  в выдаче.
+required:
+  - limit
+  - offset
+  - total
+properties:
+  limit:
+    type: integer
+    minimum: 1
+    maximum: 100
+    description: Сколько записей запрошено на страницу.
+    example: 20
+  offset:
+    type: integer
+    minimum: 0
+    description: Сколько записей пропущено от начала выдачи.
+    example: 0
+  total:
+    type: integer
+    format: int64
+    minimum: 0
+    description: Сколько записей всего в выдаче.
+    example: 42

@@ -1,0 +1,8 @@
+type: object
+description: Просьба площадки отменить принятый заказ.
+properties:
+  reason:
+    type: string
+    maxLength: 500
+    description: Причина отмены для оператора заведения.
+    example: Отмена по просьбе покупателя

@@ -1,0 +1,31 @@
+type: object
+description: |
+  Оформление заказа. `order_id` генерирует клиент (uuid v7 — монотонный, чтобы клиентский
+  первичный ключ не разносил вставки по индексу) и он же служит ключом идемпотентности:
+  повторная отправка того же заказа возвращает существующий заказ, а тот же идентификатор
+  с другим составом отклоняется как переиспользование ключа.
+required:
+  - order_id
+  - restaurant_id
+  - address
+  - items
+properties:
+  order_id:
+    type: string
+    format: uuid
+    example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+  restaurant_id:
+    type: string
+    format: uuid
+    example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+  address:
+    type: string
+    minLength: 1
+    maxLength: 500
+    example: Москва, Лесная 7, кв. 12
+  items:
+    type: array
+    minItems: 1
+    maxItems: 100
+    items:
+      $ref: 'NewOrderItem.yaml'

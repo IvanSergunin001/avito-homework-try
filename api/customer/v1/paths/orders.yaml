@@ -1,0 +1,56 @@
+post:
+  operationId: placeOrder
+  summary: Оформить заказ
+  description: |
+    Площадка сохраняет заказ, синхронно спрашивает заведение и возвращает результат.
+    Заведение — источник истины по наличию и цене, поэтому отказы приходят с его слов и
+    все они — `409` с машиночитаемой причиной: `out_of_stock`, `price_changed`
+    (с актуальной ценой в `current_price`), `unknown_product`, `restaurant_closed`.
+    Заведение, не ответившее вовсе, — `502`, не ответившее вовремя — `504`.
+
+    Идемпотентность — по `order_id`, и отдельного ключа в этом обмене нет:
+
+    - тот же идентификатор и тот же состав — `200` с уже созданным заказом; второй заказ
+      не создаётся, и заведению он второй раз не передаётся;
+    - тот же идентификатор с другим составом — `422` `idempotency_key_reuse`;
+    - идентификатор, занятый заказом другого покупателя, — `409` `idempotency_key_reuse`
+      без подробностей о том, чем он занят.
+
+    Состав сравнивается таким, каким его прислал клиент: заведение, адрес и позиции с их
+    количеством. Цены в сравнении не участвуют — их подставляет площадка, и повтор после
+    подорожания остаётся тем же самым запросом.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters/UserId.yaml'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas/NewOrder.yaml'
+  responses:
+    '201':
+      description: Заказ создан и принят заведением на рассмотрение.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Order.yaml'
+    '200':
+      description: Заказ с таким `order_id` и тем же составом уже был создан — отдаём его.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Order.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '404':
+      $ref: '../components/responses/NotFound.yaml'
+    '409':
+      $ref: '../components/responses/Conflict.yaml'
+    '422':
+      $ref: '../components/responses/UnprocessableEntity.yaml'
+    '502':
+      $ref: '../components/responses/BadGateway.yaml'
+    '504':
+      $ref: '../components/responses/GatewayTimeout.yaml'

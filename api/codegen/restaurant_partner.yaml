@@ -1,0 +1,10 @@
+# Партнёрский контракт в коробке заведения — та половина, которую заведение обязано
+# реализовать. Коробка сдаёт этот же экзамен, что и заведение со своей системой.
+package: partner_v1
+output: internal/restaurant/adapters/http/partner_v1/server.gen.go
+generate:
+  chi-server: true
+  models: true
+output-options:
+  include-tags:
+    - restaurant

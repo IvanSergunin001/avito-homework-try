@@ -1,0 +1,12 @@
+type: string
+description: |
+  Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
+  перечень не входят: их ставит сама площадка — при создании заказа и по успешному
+  синхронному ответу на приём заказа.
+enum:
+  - confirmed
+  - cooking
+  - delivering
+  - completed
+  - cancelled
+example: cooking

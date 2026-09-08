@@ -1,0 +1,22 @@
+type: object
+description: |
+  Новая позиция меню. Остаток указывается сразу: позиция без остатка недоступна, и
+  умолчание здесь решало бы за оператора, продаётся его блюдо или нет.
+required:
+  - name
+  - price
+  - stock
+properties:
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+    example: Круассан с миндалём
+  description:
+    type: string
+    maxLength: 2000
+    example: Слоёное тесто, миндальный крем
+  price:
+    $ref: 'Money.yaml'
+  stock:
+    $ref: 'Stock.yaml'

@@ -1,0 +1,125 @@
+# Одна команда поднимает всю площадку: `docker compose up --build`.
+# Значения по умолчанию заданы прямо здесь, поэтому запуск работает и без `.env`;
+# полный список ключей — в `.env.example`.
+name: avito-kitchen
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kitchen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kitchen}
+      POSTGRES_DB: ${POSTGRES_DB:-kitchen}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Данные лежат в каталоге репозитория, а не в томе Docker: полный сброс Docker
+      # (`docker system prune --volumes`, переустановка) их не трогает, и заглянуть в них
+      # можно обычными средствами хоста. У образа postgres:18 данные лежат в подкаталоге
+      # /var/lib/postgresql/<версия>, поэтому монтируется каталог целиком — иначе не
+      # сработает pg_upgrade.
+      - ./.data/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kitchen} -d ${POSTGRES_DB:-kitchen}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Миграции — отдельный шаг запуска, а не часть старта служб: службе, которая мигрирует
+  # сама, нужны права на изменение схемы в бою, а при нескольких экземплярах — ещё и
+  # договорённость, кто накатывает первым. Службы стартуют только после того, как этот
+  # шаг завершился успешно.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  platform:
+    build:
+      context: .
+      args:
+        SERVICE: platform
+    environment:
+      PLATFORM_HTTP_PORT: ${PLATFORM_HTTP_PORT:-8080}
+      PLATFORM_SHUTDOWN_TIMEOUT: ${PLATFORM_SHUTDOWN_TIMEOUT:-10s}
+      PLATFORM_LOG_LEVEL: ${PLATFORM_LOG_LEVEL:-info}
+      # Админский токен площадки: им закрыты онбординг заведений и операции саппорта.
+      # Значение по умолчанию годится только для демо — оно лежит в репозитории и
+      # известно всем, кто его открывал.
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:-demo-admin-token}
+      # Как часто площадка сама забирает меню у заведений и сколько ждёт ответа каждого.
+      # Заведение, которому ждать очередного цикла долго, зовёт внеочередное обновление.
+      PLATFORM_CATALOG_SYNC_INTERVAL: ${PLATFORM_CATALOG_SYNC_INTERVAL:-30s}
+      PLATFORM_CATALOG_SYNC_TIMEOUT: ${PLATFORM_CATALOG_SYNC_TIMEOUT:-15s}
+      # Сколько площадка ждёт решения заведения по заказу: этот предел ждёт человек
+      # перед экраном, поэтому он короче, чем ожидание фоновой выгрузки меню.
+      PLATFORM_ORDER_TIMEOUT: ${PLATFORM_ORDER_TIMEOUT:-5s}
+      # Служба подключается к уже накатанной базе: мигрирует отдельный шаг выше.
+      PLATFORM_DATABASE_DSN: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
+    ports:
+      - "${PLATFORM_HTTP_PORT:-8080}:${PLATFORM_HTTP_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${PLATFORM_HTTP_PORT:-8080}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  restaurant:
+    build:
+      context: .
+      args:
+        SERVICE: restaurant
+    environment:
+      RESTAURANT_HTTP_PORT: ${RESTAURANT_HTTP_PORT:-8081}
+      RESTAURANT_SHUTDOWN_TIMEOUT: ${RESTAURANT_SHUTDOWN_TIMEOUT:-10s}
+      RESTAURANT_LOG_LEVEL: ${RESTAURANT_LOG_LEVEL:-info}
+      # Часы работы заведения: вне их коробка отказывает площадке кодом
+      # `restaurant_closed`. Одинаковые значения — круглосуточная работа, чтобы демо
+      # принимало заказы в любое время суток.
+      RESTAURANT_OPEN_FROM: ${RESTAURANT_OPEN_FROM:-00:00}
+      RESTAURANT_OPEN_UNTIL: ${RESTAURANT_OPEN_UNTIL:-00:00}
+      # Куда и чем коробка сообщает о смене статуса заказа. Адрес — имя службы площадки в
+      # сети Compose; ключ — партнёрский ключ демонстрационного заведения, тот самый, чей
+      # хеш кладёт в базу площадки seed-миграция. Он известен всем, кто открывал
+      # репозиторий, и годится только для демонстрации.
+      RESTAURANT_PLATFORM_BASE_URL: ${RESTAURANT_PLATFORM_BASE_URL:-http://platform:8080}
+      RESTAURANT_PARTNER_KEY: ${RESTAURANT_PARTNER_KEY:-pk_DEMOKEYDEMOKEYDEMOKEYDEMOK}
+      # Как часто коробка развозит накопившиеся уведомления, сколько ждёт ответа площадки,
+      # сколько раз повторяет недоставленное и какова пауза перед первым повтором.
+      RESTAURANT_NOTIFY_INTERVAL: ${RESTAURANT_NOTIFY_INTERVAL:-1s}
+      RESTAURANT_NOTIFY_TIMEOUT: ${RESTAURANT_NOTIFY_TIMEOUT:-5s}
+      RESTAURANT_NOTIFY_MAX_ATTEMPTS: ${RESTAURANT_NOTIFY_MAX_ATTEMPTS:-3}
+      RESTAURANT_NOTIFY_RETRY_DELAY: ${RESTAURANT_NOTIFY_RETRY_DELAY:-2s}
+      # Продвижение статусов по таймеру: им демонстрируется путь покупателя целиком, без
+      # переключения на рабочее место оператора. По умолчанию выключено — статусы двигает
+      # оператор.
+      RESTAURANT_AUTO_ADVANCE_ORDERS: ${RESTAURANT_AUTO_ADVANCE_ORDERS:-false}
+      RESTAURANT_AUTO_ADVANCE_INTERVAL: ${RESTAURANT_AUTO_ADVANCE_INTERVAL:-15s}
+      # Коробка подключается к уже накатанной базе: мигрирует отдельный шаг выше.
+      # Схема у неё своя (`restaurant`), инстанс общий с площадкой — экономия на
+      # инфраструктуре демо, в эксплуатации у заведения свой.
+      RESTAURANT_DATABASE_DSN: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
+    ports:
+      - "${RESTAURANT_HTTP_PORT:-8081}:${RESTAURANT_HTTP_PORT:-8081}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${RESTAURANT_HTTP_PORT:-8081}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+

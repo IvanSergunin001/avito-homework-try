@@ -1,0 +1,17 @@
+type: string
+description: |
+  Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
+  перечисление, а расширение списка — изменение версии поверхности.
+enum:
+  - validation_failed
+  - restaurant_not_found
+  - product_not_found
+  - order_not_found
+  - out_of_stock
+  - price_changed
+  - unknown_product
+  - restaurant_closed
+  - order_not_cancellable
+  - idempotency_key_reuse
+  - restaurant_unavailable
+example: validation_failed

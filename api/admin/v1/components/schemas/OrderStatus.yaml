@@ -1,0 +1,13 @@
+type: string
+description: |
+  Статус заказа. Нетерминальные: `pending`, `under_review`, `confirmed`, `cooking`,
+  `delivering`; терминальные: `completed`, `cancelled` — переходов из них нет.
+enum:
+  - pending
+  - under_review
+  - confirmed
+  - cooking
+  - delivering
+  - completed
+  - cancelled
+example: cooking

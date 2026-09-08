@@ -1,0 +1,19 @@
+type: object
+description: |
+  Регистрация заведения. Адрес интеграции задаётся здесь, а не выводится из имени: смена
+  инфраструктуры заведения не должна требовать правок в коде площадки.
+required:
+  - name
+  - base_url
+properties:
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+    example: Пекарня «Батон»
+  base_url:
+    type: string
+    format: uri
+    maxLength: 500
+    description: Базовый адрес заведения, к которому площадка добавляет пути партнёрского контракта.
+    example: https://baton.example.org

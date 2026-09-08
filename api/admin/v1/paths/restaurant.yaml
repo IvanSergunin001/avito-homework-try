@@ -1,0 +1,32 @@
+put:
+  operationId: updateRestaurant
+  summary: Изменить реквизиты заведения
+  description: |
+    Полная замена реквизитов: имя, адрес интеграции и активность. Смена адреса нужна,
+    когда заведение переезжает на другой хост или порт, — правок в коде площадки это
+    требовать не должно.
+  tags:
+    - onboarding
+  parameters:
+    - $ref: '../components/parameters/RestaurantId.yaml'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas/RestaurantUpdate.yaml'
+  responses:
+    '200':
+      description: Реквизиты обновлены.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Restaurant.yaml'
+    '400':
+      $ref: '../components/responses/BadRequest.yaml'
+    '401':
+      $ref: '../components/responses/Unauthorized.yaml'
+    '403':
+      $ref: '../components/responses/Forbidden.yaml'
+    '404':
+      $ref: '../components/responses/NotFound.yaml'

@@ -1,0 +1,12 @@
+type: object
+description: Страница меню.
+required:
+  - items
+  - page
+properties:
+  items:
+    type: array
+    items:
+      $ref: 'MenuItem.yaml'
+  page:
+    $ref: 'PageMeta.yaml'
