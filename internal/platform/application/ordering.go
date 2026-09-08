@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +19,14 @@ import (
 // `pending`; заголовок контракта заведён под них с самого начала — иначе первый же повтор
 // приехал бы к заведению неотличимым от нового заказа.
 const firstAttempt = 1
+
+// catalogCatchUpTimeout — сколько отведено внеочередной выгрузке меню, которую площадка
+// затевает сама, обнаружив, что цена на витрине разошлась с ценой заведения.
+//
+// Предел свой, а не общий с плановой синхронизацией: ту ведёт служба и ждать её некому, а
+// эта запущена запросом покупателя, который уже закончился, — и висеть после него дольше,
+// чем живёт сам повод, ей незачем.
+const catalogCatchUpTimeout = 30 * time.Second
 
 // OrderedItem — строка корзины покупателя: какой товар и сколько его взяли.
 //
@@ -73,8 +83,13 @@ type OrderedProducts interface {
 
 // Orders — хранилище заказов площадки.
 type Orders interface {
-	// Add записывает оформленный заказ.
-	Add(ctx context.Context, order domain.Order) error
+	// Add записывает оформленный заказ. Второй результат отвечает, завела ли площадка
+	// заказ сейчас: ложь означает, что идентификатор уже занят, и отдан заказ, который
+	// его занимает, — чей он и тем ли запросом оформлен, решает предметная область.
+	//
+	// Отдельного «есть ли уже такой» у хранилища нет намеренно: между вопросом и записью
+	// помещается второе нажатие «Заказать», и обе попытки получили бы ответ «нет».
+	Add(ctx context.Context, order domain.Order) (domain.Order, bool, error)
 	// SaveStatus записывает новое состояние заказа: сам статус, инициатора и причину
 	// отмены. Состав и сумма не переписываются никогда — заказ не меняется задним числом.
 	SaveStatus(ctx context.Context, order domain.Order) error
@@ -120,6 +135,41 @@ func (e RestaurantUnavailableError) Unwrap() error {
 	return e.Err
 }
 
+// RestaurantRefusalError — заведение отказалось взять заказ и назвало причину.
+//
+// Это не сбой связи и не поломка: заведение ответило по контракту, и ответ его —
+// «выполнить не можем, потому что». Позиция названа тем идентификатором, которым её знает
+// само заведение: перевести его в товар площадки может только тот, у кого на руках
+// состав заказа.
+type RestaurantRefusalError struct {
+	// Reason — машиночитаемая причина отказа.
+	Reason domain.RefusalReason
+	// ProductExternalID — позиция, из-за которой отказан заказ, в идентификаторах
+	// заведения; у отказа закрытого заведения её нет.
+	ProductExternalID string
+	// CurrentPrice — актуальная цена позиции у заведения; приходит с причиной
+	// domain.PriceChanged.
+	CurrentPrice domain.Money
+	// Detail — пояснение для человека.
+	Detail string
+}
+
+// Error возвращает причину, по которой заведение не взяло заказ.
+func (e RestaurantRefusalError) Error() string {
+	return fmt.Sprintf("заведение не приняло заказ (%s): %s", e.Reason, e.Detail)
+}
+
+// CatalogRefresh — внеочередное обновление каталога заведения.
+//
+// Оформление зависит от синхронизации ровно в одной точке: заведение ответило, что цена
+// не та, — значит, витрина показывает вчерашнюю правду, и правит её не человек по жалобе,
+// а сама площадка. Порт здесь узкий специально: оформлению нужно одно действие, а не вся
+// синхронизация каталога.
+type CatalogRefresh interface {
+	// Refresh забирает меню заведения и применяет его к каталогу площадки.
+	Refresh(ctx context.Context, partner domain.Partner) error
+}
+
 // Ordering — оформление заказа и его просмотр покупателем.
 //
 // Сценарий один на оба действия намеренно: заказ, который покупатель оформил, и заказ,
@@ -130,12 +180,20 @@ type Ordering struct {
 	products OrderedProducts
 	orders   Orders
 	intake   OrderIntake
+	catalog  CatalogRefresh
+	log      *slog.Logger
 }
 
-// NewOrdering собирает оформление над заведениями, каталогом, хранилищем заказов и
-// приёмом заказа заведением.
-func NewOrdering(partners Partners, products OrderedProducts, orders Orders, intake OrderIntake) *Ordering {
-	return &Ordering{partners: partners, products: products, orders: orders, intake: intake}
+// NewOrdering собирает оформление над заведениями, каталогом, хранилищем заказов, приёмом
+// заказа заведением и внеочередным обновлением каталога.
+func NewOrdering(
+	partners Partners, products OrderedProducts, orders Orders, intake OrderIntake,
+	catalog CatalogRefresh, log *slog.Logger,
+) *Ordering {
+	return &Ordering{
+		partners: partners, products: products, orders: orders,
+		intake: intake, catalog: catalog, log: log,
+	}
 }
 
 // Place оформляет заказ: считает сумму, записывает заказ и передаёт его заведению.
@@ -150,41 +208,113 @@ func NewOrdering(partners Partners, products OrderedProducts, orders Orders, int
 // Заведение, не ответившее вовсе, оставляет заказ в `pending`: он записан, покупатель
 // видит отказ, а починить такой заказ можно повторной отправкой по тому же
 // идентификатору.
-func (o *Ordering) Place(ctx context.Context, placement Placement) (domain.Order, error) {
+//
+// Повтор проходит тот же путь целиком: заказ собирается по каталогу заново и только потом
+// упирается в занятый идентификатор. Обратный порядок — сначала спросить хранилище, есть
+// ли уже такой заказ, — означал бы чтение перед вставкой, между которыми помещается второе
+// нажатие «Заказать»: оба чтения ответили бы «нет». Цена выбранного порядка в том, что
+// повтор заказа, позиция которого успела исчезнуть с витрины, получит «товар не найден»
+// вместо своего заказа.
+func (o *Ordering) Place(ctx context.Context, placement Placement) (domain.Order, bool, error) {
 	// Заведение берётся со стороны интеграции, а не с витрины: оформлению нужен адрес
 	// коробки, и он же отвечает на вопрос, работает ли заведение вообще.
 	partner, err := o.partners.Find(ctx, placement.RestaurantID)
 	if err != nil {
-		return domain.Order{}, err
+		return domain.Order{}, false, err
 	}
 
 	items, err := o.snapshot(ctx, placement)
 	if err != nil {
-		return domain.Order{}, err
+		return domain.Order{}, false, err
 	}
 
 	order, err := domain.PlaceOrder(placement.OrderID, placement.CustomerID, placement.RestaurantID,
 		placement.Address, items, now())
 	if err != nil {
-		return domain.Order{}, err
+		return domain.Order{}, false, err
 	}
 
-	if err := o.orders.Add(ctx, order); err != nil {
-		return domain.Order{}, err
+	existing, placed, err := o.orders.Add(ctx, order)
+	if err != nil {
+		return domain.Order{}, false, err
+	}
+	if !placed {
+		// Идентификатор занят: либо это повтор — и тогда покупатель получает свой заказ
+		// таким, каким он есть сейчас, — либо тем же идентификатором оформляют другой
+		// заказ, и это отказ. Заведение в обоих случаях не тревожат: заказ ему уже
+		// передавали, и второй раз он был бы вторым заказом.
+		repeated, err := existing.Repeat(order)
+
+		return repeated, false, err
 	}
 
 	if err := o.intake.Accept(ctx, partner.BaseURL, order, firstAttempt); err != nil {
-		return domain.Order{}, err
+		return domain.Order{}, false, o.refusalOf(ctx, partner, order, err)
 	}
 
 	if err := order.TransitionTo(domain.UnderReview, domain.ByRestaurant, now()); err != nil {
-		return domain.Order{}, fmt.Errorf("принять ответ заведения по заказу %s: %w", order.ID, err)
+		return domain.Order{}, false, fmt.Errorf("принять ответ заведения по заказу %s: %w", order.ID, err)
 	}
 	if err := o.orders.SaveStatus(ctx, order); err != nil {
-		return domain.Order{}, err
+		return domain.Order{}, false, err
 	}
 
-	return order, nil
+	return order, true, nil
+}
+
+// refusalOf переводит ответ заведения на переданный заказ в отказ, который увидит
+// покупатель.
+//
+// Заведение отвечает в своих идентификаторах, покупатель читает ответ в идентификаторах
+// площадки: позицию, из-за которой отказан заказ, называет состав самого заказа — он
+// уехал заведению снимком, и позиция ищется в нём, а не в каталоге, который к этому
+// моменту мог измениться.
+//
+// Всё, что отказом заведения не является — молчание, ответ не по контракту, поломка
+// внутри площадки, — проходит насквозь: причины, по которой покупатель может что-то
+// решить, у такого ответа нет.
+func (o *Ordering) refusalOf(
+	ctx context.Context, partner domain.Partner, order domain.Order, err error,
+) error {
+	var refusal RestaurantRefusalError
+	if !errors.As(err, &refusal) {
+		return err
+	}
+
+	if refusal.Reason == domain.PriceChanged {
+		o.catchUpWithTheMenu(ctx, partner)
+	}
+
+	return domain.OrderRefusedError{
+		Reason:       refusal.Reason,
+		ProductID:    order.ProductOf(refusal.ProductExternalID),
+		CurrentPrice: refusal.CurrentPrice,
+		Detail:       refusal.Detail,
+	}
+}
+
+// catchUpWithTheMenu отправляет площадку за меню заведения вне очереди: цена, по которой
+// заказ отказан, на витрине всё ещё старая, и следующий покупатель наткнулся бы на тот же
+// отказ.
+//
+// Синхронизация идёт мимо покупателя: он уже получил отказ с новой ценой, а меню целиком
+// заведение отдаёт дольше, чем площадка готова держать человека перед экраном, — предел
+// ожидания выгрузки для того и больше предела ожидания заказа. Поэтому и контекст свой:
+// запрос покупателя вот-вот закончится и отменил бы выгрузку на середине.
+//
+// Неудача остаётся в логе: позвать её было решением площадки, а не покупателя, и
+// рассказывать ему о том, чего он не просил, незачем — на витрине цена догонит
+// реальность следующей плановой выгрузкой.
+func (o *Ordering) catchUpWithTheMenu(ctx context.Context, partner domain.Partner) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), catalogCatchUpTimeout)
+		defer cancel()
+
+		if err := o.catalog.Refresh(ctx, partner); err != nil {
+			o.log.ErrorContext(ctx, "extraordinary catalog sync failed",
+				slog.String("restaurant_id", partner.ID.String()), slog.Any("error", err))
+		}
+	}()
 }
 
 // Order отдаёт заказ покупателя: его состав, сумму и состояние.

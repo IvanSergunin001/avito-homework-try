@@ -42,8 +42,11 @@ func NewRouter(
 	onboarding := application.NewOnboarding(restaurants)
 	catalogSync := application.NewCatalogSync(restaurants,
 		restaurant_client.NewMenuSource(timeouts.CatalogSync), postgres.NewCatalog(db), log)
+	// Синхронизация каталога достаётся оформлению той же самой: заведение, ответившее
+	// «цена не та», отправляет площадку за меню вне очереди — тем же сценарием, которым
+	// она ходит за ним по расписанию и по просьбе заведения.
 	ordering := application.NewOrdering(restaurants, products, postgres.NewOrders(db),
-		restaurant_client.NewOrderIntake(timeouts.OrderPlacement))
+		restaurant_client.NewOrderIntake(timeouts.OrderPlacement), catalogSync, log)
 	access := guard{gate: application.NewGatekeeper(restaurants, adminToken), log: log}
 
 	r := httpx.NewRouter(log)

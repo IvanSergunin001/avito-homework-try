@@ -5,7 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
+	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
 	"github.com/IvanSergunin001/Test157/internal/platform/adapters/http/customer_v1"
 	"github.com/IvanSergunin001/Test157/internal/platform/application"
 	"github.com/IvanSergunin001/Test157/internal/platform/domain"
@@ -22,7 +25,9 @@ import (
 // её считает площадка по своему каталогу, и присланной клиентом сумме взяться неоткуда.
 //
 // Ответ — `201`: заказ создан. Что с ним дальше, видно по статусу: успешный ответ
-// заведения оставляет заказ в `under_review`.
+// заведения оставляет заказ в `under_review`. Повтор того же заказа отвечает `200` и тем
+// же заказом: второй заказ не заводится, и по коду ответа клиент видит, случилось ли
+// что-то новое.
 func (a customerAPI) PlaceOrder(w http.ResponseWriter, r *http.Request, params customer_v1.PlaceOrderParams) {
 	var body customer_v1.NewOrder
 	if err := decodeOrderBody(r, &body, "order_id", "restaurant_id", "address", "items"); err != nil {
@@ -36,7 +41,7 @@ func (a customerAPI) PlaceOrder(w http.ResponseWriter, r *http.Request, params c
 		items = append(items, application.OrderedItem{ProductID: item.ProductId, Quantity: item.Quantity})
 	}
 
-	order, err := a.ordering.Place(r.Context(), application.Placement{
+	order, placed, err := a.ordering.Place(r.Context(), application.Placement{
 		OrderID:      body.OrderId,
 		CustomerID:   params.UserId,
 		RestaurantID: body.RestaurantId,
@@ -49,7 +54,12 @@ func (a customerAPI) PlaceOrder(w http.ResponseWriter, r *http.Request, params c
 		return
 	}
 
-	httpx.WriteJSON(r.Context(), w, http.StatusCreated, orderDocument(order))
+	status := http.StatusOK
+	if placed {
+		status = http.StatusCreated
+	}
+
+	httpx.WriteJSON(r.Context(), w, status, orderDocument(order))
 }
 
 // GetOrder отдаёт заказ покупателя: его состояние, состав и сумму.
@@ -86,6 +96,7 @@ func decodeOrderBody(r *http.Request, body any, required ...string) error {
 func (a customerAPI) refuseOrder(w http.ResponseWriter, r *http.Request, err error) {
 	var (
 		invalid     domain.InvalidOrderError
+		refused     domain.OrderRefusedError
 		unavailable application.RestaurantUnavailableError
 	)
 
@@ -102,10 +113,103 @@ func (a customerAPI) refuseOrder(w http.ResponseWriter, r *http.Request, err err
 	case errors.Is(err, domain.ErrOrderNotFound):
 		writeCustomerProblem(w, r, http.StatusNotFound, customer_v1.OrderNotFound,
 			"Заказ не найден", "заказа с таким идентификатором у вас нет")
+	case errors.As(err, &refused):
+		a.refuseByTheRestaurant(w, r, refused)
+	case errors.Is(err, domain.ErrIdempotencyKeyReuse):
+		writeCustomerProblem(w, r, http.StatusUnprocessableEntity, customer_v1.IdempotencyKeyReuse,
+			"Идентификатор заказа уже использован",
+			"этим идентификатором уже оформлен другой заказ: выдайте новый и повторите")
+	case errors.Is(err, domain.ErrOrderIDTaken):
+		// Чем именно занят идентификатор, покупателю не сообщается: по разным ответам
+		// перебор рассказал бы, какие заказы на площадке есть и чем они отличаются от
+		// присланного. Действие у покупателя всё равно одно — оформить заказ заново.
+		writeCustomerProblem(w, r, http.StatusConflict, customer_v1.IdempotencyKeyReuse,
+			"Идентификатор заказа уже занят",
+			"этим идентификатором уже оформлен заказ: выдайте новый и повторите")
 	case errors.As(err, &unavailable):
 		a.refuseUnavailableRestaurant(w, r, unavailable)
 	default:
 		a.writeCustomerFailure(w, r, err)
+	}
+}
+
+// refuseByTheRestaurant отвечает покупателю отказом заведения.
+//
+// Код ответа один на все причины — `409`: заказ не выполнить в том виде, в каком его
+// оформили, и различает причины машиночитаемое поле `code`, а не код ответа. Товар, из-за
+// которого отказан заказ, уезжает тем же документом: без него клиенту пришлось бы гадать,
+// какую строку корзины показать покупателю.
+//
+// Объяснение площадка пишет своё, а слова заведения оставляет в логе: `detail` заведения
+// написан для того, кто разбирается в интеграции («площадка показала 45000, у заведения
+// 90000»), а не для человека, который выбирает, брать ли круассан по новой цене.
+func (a customerAPI) refuseByTheRestaurant(
+	w http.ResponseWriter, r *http.Request, refusal domain.OrderRefusedError,
+) {
+	code, described := refusalCode(refusal.Reason)
+	if !described {
+		a.writeCustomerFailure(w, r, refusal)
+
+		return
+	}
+
+	a.log.WarnContext(r.Context(), "restaurant refused the order", slog.Any("error", refusal))
+
+	title, detail := refusalWording(refusal.Reason)
+	document := customer_v1.Problem{
+		Type:   problem.DefaultType,
+		Title:  title,
+		Status: http.StatusConflict,
+		Detail: &detail,
+		Code:   code,
+	}
+	// Товара нет у отказа закрытого заведения, а цены — у всех отказов, кроме
+	// подорожания: пустые значения сообщили бы клиенту, что позиция стоит ноль.
+	if refusal.ProductID != uuid.Nil {
+		document.ProductId = &refusal.ProductID
+	}
+	if refusal.Reason == domain.PriceChanged {
+		price := int64(refusal.CurrentPrice)
+		document.CurrentPrice = &price
+	}
+
+	problem.Write(r.Context(), w, http.StatusConflict, document)
+}
+
+// refusalCode переводит причину отказа предметной области в код клиентской спецификации.
+//
+// Перевод явный, а не приведением строки: перечень кодов спецификации закрыт, клиент
+// вправе разбирать его как перечисление, и причина, которой в спецификации нет, — это
+// расхождение площадки с собственным контрактом, а не ответ покупателю.
+func refusalCode(reason domain.RefusalReason) (customer_v1.ProblemCode, bool) {
+	switch reason {
+	case domain.OutOfStock:
+		return customer_v1.OutOfStock, true
+	case domain.PriceChanged:
+		return customer_v1.PriceChanged, true
+	case domain.UnknownProduct:
+		return customer_v1.UnknownProduct, true
+	case domain.RestaurantClosed:
+		return customer_v1.RestaurantClosed, true
+	default:
+		return "", false
+	}
+}
+
+// refusalWording — как отказ заведения объясняется покупателю: коротким названием и
+// пояснением, из которого видно, что делать дальше.
+func refusalWording(reason domain.RefusalReason) (title, detail string) {
+	switch reason {
+	case domain.OutOfStock:
+		return "Товар закончился", "заведение не может отдать столько: замените позицию и попробуйте снова"
+	case domain.PriceChanged:
+		return "Цена изменилась", "заведение отдаёт товар по другой цене — актуальная цена в поле current_price"
+	case domain.UnknownProduct:
+		return "Товара больше нет", "заведение убрало этот товар из меню: он вот-вот исчезнет и с витрины"
+	case domain.RestaurantClosed:
+		return "Заведение закрыто", "заведение сейчас не принимает заказы: попробуйте позже или выберите другое"
+	default:
+		return "Заказ не принят", "заведение не приняло заказ"
 	}
 }
 
