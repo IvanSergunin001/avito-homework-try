@@ -1,25 +1,28 @@
 openapi: 3.0.3
 info:
-  title: Авито.Кухня — админская поверхность
+  title: Авито.Кухня — админское API
   version: 1.0.0
   description: |
     Регистрация заведений, правка их реквизитов и отмена заказа саппортом.
 
-    Доступ — `Authorization: Bearer <админский токен>`. Это не аутентификация сотрудника,
-    а минимальная защита операций, которыми нельзя дать пользоваться посторонним: подмена
-    адреса заведения означала бы увод чужих заказов. Токен приходит из конфигурации
-    площадки; партнёрский ключ здесь не подходит и даёт `403`.
+    Защиты у этих операций в MVP нет: сотрудник называет себя тем же заголовком `User-Id`,
+    что и покупатель. Цена решения названа прямо — кто угодно, знающий путь, зарегистрирует
+    заведение или отменит чужой заказ; для демо это приемлемо (ручки не опубликованы, данные
+    показательные), для эксплуатации нет. Чем это закрывается в проде — в разделе упрощений
+    README.
 
     Ошибки — `application/problem+json` (RFC 7807, актуализирован RFC 9457) с
     дополнительным полем `code`: машиночитаемая причина отказа.
 
-    Общие с клиентской и партнёрской спецификациями схемы (ошибка, пагинация) намеренно
-    продублированы: поверхности живут разными циклами выпуска.
+    Общие с клиентской и партнёрской спецификациями схемы — основа ошибки и список кодов
+    причин — лежат в `api/common/v1` и подключаются `$ref`'ом. Схемы страницы здесь нет:
+    коллекций админское API не отдаёт.
 servers:
-  - url: https://kitchen.avito.ru/api/admin/v1
+  - url: https://kitchen.avito.ru/api/kitchen/v1/admin
     description: Площадка
-security:
-  - adminToken: []
+  - url: http://localhost:8080/api/kitchen/v1/admin
+    description: Локальный запуск через Compose
+security: []
 tags:
   - name: onboarding
     description: Подключение заведений и их реквизиты
@@ -35,6 +38,8 @@ paths:
         Ключ возвращается один раз — площадка хранит только его хеш.
       tags:
         - onboarding
+      parameters:
+        - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -50,21 +55,16 @@ paths:
                 $ref: '#/components/schemas/RegisteredRestaurant'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
   /restaurants/{restaurantId}:
-    put:
+    patch:
       operationId: updateRestaurant
       summary: Изменить реквизиты заведения
       description: |
-        Полная замена реквизитов: имя, адрес интеграции и активность. Смена адреса нужна,
-        когда заведение переезжает на другой хост или порт, — правок в коде площадки это
-        требовать не должно.
+        Меняются только переданные поля: чтобы отключить заведение, знать его адрес не нужно.
       tags:
         - onboarding
       parameters:
+        - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/RestaurantId'
       requestBody:
         required: true
@@ -81,10 +81,6 @@ paths:
                 $ref: '#/components/schemas/Restaurant'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /orders/{orderId}/cancel:
@@ -101,6 +97,7 @@ paths:
       tags:
         - support
       parameters:
+        - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/OrderId'
       requestBody:
         required: true
@@ -117,26 +114,43 @@ paths:
                 $ref: '#/components/schemas/Order'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
 components:
-  securitySchemes:
-    adminToken:
-      type: http
-      scheme: bearer
-      description: Админский токен площадки из её конфигурации.
+  parameters:
+    UserId:
+      name: User-Id
+      in: header
+      required: true
+      description: |
+        Идентификатор того, кто обращается: покупателя в клиентском API, сотрудника — в
+        админском. Не удостоверение, а самопровозглашённое значение, которому площадка верит по
+        условию задания (README, «Упрощения»). Префикс `X-` не используется — RFC 6648.
+      schema:
+        type: string
+        format: uuid
+    RestaurantId:
+      name: restaurantId
+      in: path
+      required: true
+      description: Идентификатор заведения.
+      schema:
+        type: string
+        format: uuid
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Идентификатор заказа.
+      schema:
+        type: string
+        format: uuid
   schemas:
     NewRestaurant:
       type: object
-      description: |
-        Регистрация заведения. Адрес интеграции задаётся здесь, а не выводится из имени: смена
-        инфраструктуры заведения не должна требовать правок в коде площадки.
+      description: Регистрация заведения.
       required:
         - name
         - base_url
@@ -181,28 +195,37 @@ components:
           example: true
         partner_key:
           type: string
-          description: Партнёрский ключ для заголовка `Authorization` партнёрской поверхности.
+          description: Партнёрский ключ для заголовка `Authorization` партнёрского API.
           example: pk_018f2b5c1f4a7c3e9a102b8f5d7c1a01
     ProblemCode:
       type: string
       description: |
-        Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
-        перечисление, а расширение списка — изменение версии поверхности.
+        Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+        разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+        список — API объявляет и те коды, которых сам не возвращает.
       enum:
         - validation_failed
+        - not_implemented
+        - internal_error
         - unauthorized
         - forbidden
         - restaurant_not_found
+        - product_not_found
         - order_not_found
+        - out_of_stock
+        - price_changed
+        - unknown_product
+        - restaurant_closed
         - order_not_cancellable
+        - idempotency_key_reuse
+        - restaurant_unavailable
       example: validation_failed
-    Problem:
+    ProblemBase:
       type: object
       description: |
-        Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-        Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-        выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-        изменения версии поверхности.
+        Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+        Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+        Своё поле API добавляет к этой основе через `allOf`.
       required:
         - type
         - title
@@ -213,36 +236,45 @@ components:
           type: string
           format: uri-reference
           default: about:blank
-          description: Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+          description: |
+            Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+            причины нет, идентичность несёт `code`.
           example: about:blank
         title:
           type: string
           description: Короткое человекочитаемое название проблемы.
-          example: Требуется авторизация
+          example: Некорректный запрос
         status:
           type: integer
           minimum: 100
           maximum: 599
           description: Код ответа HTTP, продублированный в теле.
-          example: 401
+          example: 400
         detail:
           type: string
           description: Пояснение для человека, привязанное к конкретному случаю.
+          example: 'limit: допустимы значения от 1 до 100'
         instance:
           type: string
           format: uri-reference
-          description: Ссылка на конкретное вхождение проблемы.
+          nullable: true
+          description: |
+            Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+            когда по отказу нужно будет попадать в журнал или в обращение поддержки.
         code:
           $ref: '#/components/schemas/ProblemCode'
+    Problem:
+      description: |
+        Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+        инструменту саппорта хватает кода причины и текста.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
     RestaurantUpdate:
       type: object
       description: |
-        Полная замена реквизитов заведения. Флаг активности здесь же: отключение заведения —
-        та же операция правки, а не отдельная ручка, потому что причин отличать их нет.
-      required:
-        - name
-        - base_url
-        - is_active
+        Правка реквизитов заведения: применяются только переданные поля, остальные остаются как
+        были. Пустое тело — не ошибка, а отсутствие изменений.
+      minProperties: 1
       properties:
         name:
           type: string
@@ -265,6 +297,8 @@ components:
         - name
         - base_url
         - is_active
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -285,6 +319,14 @@ components:
           type: string
           format: date-time
           description: Когда каталог заведения синхронизировался последний раз.
+        created_at:
+          type: string
+          format: date-time
+          description: Когда заведение зарегистрировали на площадке.
+        updated_at:
+          type: string
+          format: date-time
+          description: Когда его реквизиты правили последний раз.
     SupportCancellation:
       type: object
       description: |
@@ -316,9 +358,7 @@ components:
       type: integer
       format: int64
       minimum: 0
-      description: |
-        Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-        денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+      description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
       example: 45000
     Quantity:
       type: integer
@@ -349,14 +389,13 @@ components:
     CancelledBy:
       type: string
       description: |
-        Кто отменил заказ. Отмена саппортом отмечается `support`, а не `restaurant`: заведение
-        после начала готовки отменяет заказ только обращением в саппорт, и в истории должно быть
-        видно, что решение принимал человек площадки.
+        Кто отменил заказ. Отмена заведением после начала готовки идёт через саппорт, поэтому
+        `support` — самостоятельное значение, а не разновидность `restaurant`.
       enum:
         - customer
         - restaurant
         - support
-      example: support
+      example: customer
     Order:
       type: object
       description: Заказ глазами саппорта.
@@ -415,20 +454,6 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
-    Unauthorized:
-      description: |
-        Токен не передан или неизвестен: `code` = `unauthorized`.
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
-    Forbidden:
-      description: |
-        Токен есть, но он партнёрский: админские операции им не выполняются, `code` = `forbidden`.
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
     NotFound:
       description: |
         Сущности с таким идентификатором нет.
@@ -443,20 +468,3 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
-  parameters:
-    RestaurantId:
-      name: restaurantId
-      in: path
-      required: true
-      description: Идентификатор заведения.
-      schema:
-        type: string
-        format: uuid
-    OrderId:
-      name: orderId
-      in: path
-      required: true
-      description: Идентификатор заказа.
-      schema:
-        type: string
-        format: uuid

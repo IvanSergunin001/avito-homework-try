@@ -1,0 +1,9 @@
+name: Idempotency-Key
+in: header
+required: true
+description: |
+  Ключ идемпотентности отправки заказа — совпадает с `order_id` в теле. Повтор с тем же
+  ключом не создаёт второй заказ, а возвращает результат первого.
+schema:
+  type: string
+  format: uuid

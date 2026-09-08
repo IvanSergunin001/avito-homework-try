@@ -13,7 +13,7 @@ get:
     - restaurant
   parameters:
     - $ref: '../components/parameters/Limit.yaml'
-    - $ref: '../components/parameters/Offset.yaml'
+    - $ref: '../../../common/v1/components/parameters/Offset.yaml'
   responses:
     '200':
       description: Страница меню.

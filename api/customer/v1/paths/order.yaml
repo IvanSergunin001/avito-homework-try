@@ -8,7 +8,7 @@ get:
     - orders
   parameters:
     - $ref: '../components/parameters/OrderId.yaml'
-    - $ref: '../components/parameters/UserId.yaml'
+    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
   responses:
     '200':
       description: Заказ.

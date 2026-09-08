@@ -27,16 +27,20 @@ info:
     Ошибки обеих сторон — `application/problem+json` (RFC 7807, актуализирован RFC 9457)
     с дополнительным полем `code`: машиночитаемая причина отказа.
 
-    Общие с клиентской и админской спецификациями схемы (ошибка, пагинация) намеренно
-    продублированы: поверхности живут разными циклами выпуска.
+    Общие с клиентской и админской спецификациями схемы — основа ошибки, список кодов
+    причин, страница выдачи и деньги — лежат в `api/common/v1` и подключаются `$ref`'ом.
+    Партнёру это незаметно: наружу уходит `bundle.yaml`, в котором ссылки уже развёрнуты.
 servers:
-  - url: '{restaurantBaseUrl}/api/v1'
+  - url: '{restaurantBaseUrl}/api/kitchen/v1/restaurant'
     description: |
       Заведение. `restaurantBaseUrl` — адрес, который заведение сообщило площадке при
       онбординге; операции с тегом `platform` переопределяют сервер на адрес площадки.
     variables:
       restaurantBaseUrl:
         default: https://restaurant.example.org
+        description: |
+          При локальном запуске через Compose — `http://localhost:8081`; операции с тегом
+          `platform` живут на площадке, `http://localhost:8080`.
 security: []
 tags:
   - name: restaurant
@@ -153,8 +157,10 @@ paths:
       tags:
         - platform
       servers:
-        - url: https://kitchen.avito.ru/api/partner/v1
+        - url: https://kitchen.avito.ru/api/kitchen/v1/partner
           description: Площадка
+        - url: http://localhost:8080/api/kitchen/v1/partner
+          description: Локальный запуск через Compose
       security:
         - partnerKey: []
       responses:
@@ -178,8 +184,10 @@ paths:
       tags:
         - platform
       servers:
-        - url: https://kitchen.avito.ru/api/partner/v1
+        - url: https://kitchen.avito.ru/api/kitchen/v1/partner
           description: Площадка
+        - url: http://localhost:8080/api/kitchen/v1/partner
+          description: Локальный запуск через Compose
       security:
         - partnerKey: []
       parameters:
@@ -219,8 +227,8 @@ components:
       in: query
       required: false
       description: |
-        Размер страницы меню. По умолчанию 100, больше 500 за раз площадка не запрашивает и
-        заведение не отдаёт: страничная выдача — часть контракта, а не рекомендация.
+        Размер страницы меню: по умолчанию 100, максимум 500. Страничная выдача — обязанность
+        заведения, а не рекомендация.
       schema:
         type: integer
         minimum: 1
@@ -230,7 +238,7 @@ components:
       name: offset
       in: query
       required: false
-      description: Сколько позиций пропустить от начала выдачи.
+      description: Сколько записей пропустить от начала выдачи.
       schema:
         type: integer
         minimum: 0
@@ -240,9 +248,8 @@ components:
       in: header
       required: true
       description: |
-        Ключ идемпотентности повторной отправки заказа — совпадает с `order_id` в теле.
-        Заведение обязано распознать повтор: второй запрос с тем же ключом не создаёт второй
-        заказ, а возвращает результат первого.
+        Ключ идемпотентности отправки заказа — совпадает с `order_id` в теле. Повтор с тем же
+        ключом не создаёт второй заказ, а возвращает результат первого.
       schema:
         type: string
         format: uuid
@@ -251,18 +258,13 @@ components:
       in: header
       required: true
       description: |
-        Номер попытки отправки этого заказа, начиная с 1. Площадка увеличивает его на каждом
-        повторе, чтобы заведение отличало настоящий повтор от первой доставки и не заводило
-        дубль при ретрае по таймауту.
-
-        Стандарта на номер попытки не существует (стандартизован только сам `Idempotency-Key`),
-        поэтому заголовок описан здесь как часть контракта. Префикс `X-` не используется: RFC 6648
-        признал его устаревшим — заголовок всё равно перестаёт быть «экспериментальным», а
-        переименование потом ломает всех клиентов.
+        Номер попытки отправки, начиная с 1: он растёт на каждом повторе, чтобы принимающая
+        сторона отличала настоящий повтор от первой доставки. Стандарта на номер попытки нет
+        (стандартизован только `Idempotency-Key`), поэтому заголовок описан здесь как часть
+        контракта; префикс `X-` не используется — RFC 6648.
       schema:
         type: integer
         minimum: 1
-        default: 1
       example: 1
     OrderId:
       name: orderId
@@ -277,9 +279,7 @@ components:
       type: integer
       format: int64
       minimum: 0
-      description: |
-        Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-        денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+      description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
       example: 45000
     MenuItem:
       type: object
@@ -318,9 +318,8 @@ components:
     PageMeta:
       type: object
       description: |
-        Страница выдачи: смещение и размер, которые запросила площадка, плюс общее число
-        записей. Меню отдаётся страницами, чтобы большой каталог не приходилось отдавать
-        одним ответом.
+        Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
+        которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
       required:
         - limit
         - offset
@@ -329,20 +328,19 @@ components:
         limit:
           type: integer
           minimum: 1
-          maximum: 500
-          description: Сколько позиций запрошено на страницу.
-          example: 100
+          description: Сколько записей запрошено на страницу.
+          example: 20
         offset:
           type: integer
           minimum: 0
-          description: Сколько позиций пропущено от начала выдачи.
+          description: Сколько записей пропущено от начала выдачи.
           example: 0
         total:
           type: integer
           format: int64
           minimum: 0
-          description: Сколько позиций всего в меню заведения.
-          example: 240
+          description: Сколько записей всего удовлетворяет запросу.
+          example: 42
     MenuPage:
       type: object
       description: Страница меню заведения.
@@ -359,26 +357,32 @@ components:
     ProblemCode:
       type: string
       description: |
-        Машиночитаемая причина отказа. Перечень закрыт: обе стороны вправе разбирать его как
-        перечисление, а расширение списка — изменение версии контракта.
+        Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+        разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+        список — API объявляет и те коды, которых сам не возвращает.
       enum:
         - validation_failed
+        - not_implemented
+        - internal_error
         - unauthorized
         - forbidden
+        - restaurant_not_found
+        - product_not_found
         - order_not_found
         - out_of_stock
         - price_changed
         - unknown_product
         - restaurant_closed
         - order_not_cancellable
-      example: out_of_stock
-    Problem:
+        - idempotency_key_reuse
+        - restaurant_unavailable
+      example: validation_failed
+    ProblemBase:
       type: object
       description: |
-        Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-        Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-        сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-        без изменения версии контракта.
+        Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+        Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+        Своё поле API добавляет к этой основе через `allOf`.
       required:
         - type
         - title
@@ -389,45 +393,59 @@ components:
           type: string
           format: uri-reference
           default: about:blank
-          description: Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+          description: |
+            Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+            причины нет, идентичность несёт `code`.
           example: about:blank
         title:
           type: string
           description: Короткое человекочитаемое название проблемы.
-          example: Товара нет в наличии
+          example: Некорректный запрос
         status:
           type: integer
           minimum: 100
           maximum: 599
           description: Код ответа HTTP, продублированный в теле.
-          example: 409
+          example: 400
         detail:
           type: string
           description: Пояснение для человека, привязанное к конкретному случаю.
+          example: 'limit: допустимы значения от 1 до 100'
         instance:
           type: string
           format: uri-reference
-          description: Ссылка на конкретное вхождение проблемы.
+          nullable: true
+          description: |
+            Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+            когда по отказу нужно будет попадать в журнал или в обращение поддержки.
         code:
           $ref: '#/components/schemas/ProblemCode'
-        product_external_id:
-          type: string
-          maxLength: 200
-          description: |
-            Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
-            `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
-          example: croissant-almond
-        current_price:
-          allOf:
-            - $ref: '#/components/schemas/Money'
-          description: |
-            Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
-            площадка внеочередно обновляет каталог и показывает покупателю новую цену.
+    Problem:
+      description: |
+        Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+        сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
+        - type: object
+          properties:
+            product_external_id:
+              type: string
+              maxLength: 200
+              description: |
+                Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
+                `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
+              example: croissant-almond
+            current_price:
+              allOf:
+                - $ref: '#/components/schemas/Money'
+              description: |
+                Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
+                площадка внеочередно обновляет каталог и показывает покупателю новую цену.
     Quantity:
       type: integer
       minimum: 1
       maximum: 100
-      description: Количество единиц позиции в заказе.
+      description: Количество единиц товара в позиции заказа.
       example: 2
     IncomingOrderItem:
       type: object

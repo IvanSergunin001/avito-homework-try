@@ -1,6 +1,0 @@
-# Клиентская поверхность площадки: серверный интерфейс и модели.
-package: customer_v1
-output: internal/platform/adapters/http/customer_v1/server.gen.go
-generate:
-  chi-server: true
-  models: true

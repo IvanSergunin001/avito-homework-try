@@ -14,6 +14,6 @@ properties:
     type: string
     example: Круассан с миндалём
   price:
-    $ref: 'Money.yaml'
+    $ref: '../../../../common/v1/components/schemas/Money.yaml'
   quantity:
-    $ref: 'Quantity.yaml'
+    $ref: '../../../../common/v1/components/schemas/Quantity.yaml'

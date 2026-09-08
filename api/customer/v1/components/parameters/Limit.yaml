@@ -1,7 +1,9 @@
 name: limit
 in: query
 required: false
-description: Размер страницы. По умолчанию 20, больше 100 за раз не отдаём.
+description: |
+  Размер страницы витрины: по умолчанию 20, максимум 100. Потолок у каждого API свой,
+  поэтому параметр не общий, в отличие от `offset`.
 schema:
   type: integer
   minimum: 1

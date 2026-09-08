@@ -4,6 +4,9 @@
 package partner_v1
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -75,21 +78,33 @@ func (e OrderStatusStateStatus) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	ProblemCodeForbidden           ProblemCode = "forbidden"
-	ProblemCodeOrderNotCancellable ProblemCode = "order_not_cancellable"
-	ProblemCodeOrderNotFound       ProblemCode = "order_not_found"
-	ProblemCodeOutOfStock          ProblemCode = "out_of_stock"
-	ProblemCodePriceChanged        ProblemCode = "price_changed"
-	ProblemCodeRestaurantClosed    ProblemCode = "restaurant_closed"
-	ProblemCodeUnauthorized        ProblemCode = "unauthorized"
-	ProblemCodeUnknownProduct      ProblemCode = "unknown_product"
-	ProblemCodeValidationFailed    ProblemCode = "validation_failed"
+	ProblemCodeForbidden             ProblemCode = "forbidden"
+	ProblemCodeIdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
+	ProblemCodeInternalError         ProblemCode = "internal_error"
+	ProblemCodeNotImplemented        ProblemCode = "not_implemented"
+	ProblemCodeOrderNotCancellable   ProblemCode = "order_not_cancellable"
+	ProblemCodeOrderNotFound         ProblemCode = "order_not_found"
+	ProblemCodeOutOfStock            ProblemCode = "out_of_stock"
+	ProblemCodePriceChanged          ProblemCode = "price_changed"
+	ProblemCodeProductNotFound       ProblemCode = "product_not_found"
+	ProblemCodeRestaurantClosed      ProblemCode = "restaurant_closed"
+	ProblemCodeRestaurantNotFound    ProblemCode = "restaurant_not_found"
+	ProblemCodeRestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	ProblemCodeUnauthorized          ProblemCode = "unauthorized"
+	ProblemCodeUnknownProduct        ProblemCode = "unknown_product"
+	ProblemCodeValidationFailed      ProblemCode = "validation_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case ProblemCodeForbidden:
+		return true
+	case ProblemCodeIdempotencyKeyReuse:
+		return true
+	case ProblemCodeInternalError:
+		return true
+	case ProblemCodeNotImplemented:
 		return true
 	case ProblemCodeOrderNotCancellable:
 		return true
@@ -99,7 +114,13 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case ProblemCodePriceChanged:
 		return true
+	case ProblemCodeProductNotFound:
+		return true
 	case ProblemCodeRestaurantClosed:
+		return true
+	case ProblemCodeRestaurantNotFound:
+		return true
+	case ProblemCodeRestaurantUnavailable:
 		return true
 	case ProblemCodeUnauthorized:
 		return true
@@ -112,8 +133,7 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Money Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+// Money Сумма в копейках — целое в минорных единицах (почему так, см. README).
 //
 // Example: 45000
 type Money = int64
@@ -141,16 +161,15 @@ type OrderStatusState struct {
 // Example: cooking
 type OrderStatusStateStatus string
 
-// Problem Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// Problem Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Problem struct {
-	// Code Машиночитаемая причина отказа. Перечень закрыт: обе стороны вправе разбирать его как
-	// перечисление, а расширение списка — изменение версии контракта.
+	// Code Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+	// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+	// список — API объявляет и те коды, которых сам не возвращает.
 	//
 	//
-	// Example: out_of_stock
+	// Example: validation_failed
 	Code ProblemCode `json:"code"`
 
 	// CurrentPrice Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
@@ -158,9 +177,12 @@ type Problem struct {
 	CurrentPrice *Money `json:"current_price,omitempty"`
 
 	// Detail Пояснение для человека, привязанное к конкретному случаю.
+	//
+	// Example: limit: допустимы значения от 1 до 100
 	Detail *string `json:"detail,omitempty"`
 
-	// Instance Ссылка на конкретное вхождение проблемы.
+	// Instance Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+	// когда по отказу нужно будет попадать в журнал или в обращение поддержки.
 	Instance *string `json:"instance,omitempty"`
 
 	// ProductExternalId Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
@@ -172,24 +194,66 @@ type Problem struct {
 
 	// Status Код ответа HTTP, продублированный в теле.
 	//
-	// Example: 409
+	// Example: 400
 	Status int `json:"status"`
 
 	// Title Короткое человекочитаемое название проблемы.
 	//
-	// Example: Товара нет в наличии
+	// Example: Некорректный запрос
 	Title string `json:"title"`
 
-	// Type Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+	// Type Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+	// причины нет, идентичность несёт `code`.
+	//
 	//
 	// Example: about:blank
 	Type string `json:"type"`
 }
 
-// ProblemCode Машиночитаемая причина отказа. Перечень закрыт: обе стороны вправе разбирать его как
-// перечисление, а расширение списка — изменение версии контракта.
+// ProblemBase Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type ProblemBase struct {
+	// Code Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+	// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+	// список — API объявляет и те коды, которых сам не возвращает.
+	//
+	//
+	// Example: validation_failed
+	Code ProblemCode `json:"code"`
+
+	// Detail Пояснение для человека, привязанное к конкретному случаю.
+	//
+	// Example: limit: допустимы значения от 1 до 100
+	Detail *string `json:"detail,omitempty"`
+
+	// Instance Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+	// когда по отказу нужно будет попадать в журнал или в обращение поддержки.
+	Instance *string `json:"instance,omitempty"`
+
+	// Status Код ответа HTTP, продублированный в теле.
+	//
+	// Example: 400
+	Status int `json:"status"`
+
+	// Title Короткое человекочитаемое название проблемы.
+	//
+	// Example: Некорректный запрос
+	Title string `json:"title"`
+
+	// Type Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+	// причины нет, идентичность несёт `code`.
+	//
+	//
+	// Example: about:blank
+	Type string `json:"type"`
+}
+
+// ProblemCode Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+// список — API объявляет и те коды, которых сам не возвращает.
 //
-// Example: out_of_stock
+// Example: validation_failed
 type ProblemCode string
 
 // StatusNotification Уведомление о смене статуса заказа. Приём идемпотентен: переходы монотонны, поэтому
@@ -218,28 +282,20 @@ type StatusNotification struct {
 // OrderId defines model for OrderId.
 type OrderId = openapi_types.UUID
 
-// BadRequest Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// BadRequest Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type BadRequest = Problem
 
-// Forbidden Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// Forbidden Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Forbidden = Problem
 
-// NotFound Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// NotFound Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type NotFound = Problem
 
-// Unauthorized Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// Unauthorized Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Unauthorized = Problem
 
 // NotifyOrderStatusJSONRequestBody defines body for NotifyOrderStatus for application/json ContentType.
@@ -441,4 +497,252 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 
 	return r
+}
+
+type BadRequestApplicationProblemPlusJSONResponse Problem
+
+type ForbiddenApplicationProblemPlusJSONResponse Problem
+
+type NotFoundApplicationProblemPlusJSONResponse Problem
+
+type UnauthorizedApplicationProblemPlusJSONResponse Problem
+
+type RefreshCatalogRequestObject struct {
+}
+
+type RefreshCatalogResponseObject interface {
+	VisitRefreshCatalogResponse(w http.ResponseWriter) error
+}
+
+type RefreshCatalog202Response struct {
+}
+
+func (response RefreshCatalog202Response) VisitRefreshCatalogResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type RefreshCatalog401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RefreshCatalog401ApplicationProblemPlusJSONResponse) VisitRefreshCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshCatalog403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RefreshCatalog403ApplicationProblemPlusJSONResponse) VisitRefreshCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyOrderStatusRequestObject struct {
+	OrderId OrderId `json:"orderId"`
+	Body    *NotifyOrderStatusJSONRequestBody
+}
+
+type NotifyOrderStatusResponseObject interface {
+	VisitNotifyOrderStatusResponse(w http.ResponseWriter) error
+}
+
+type NotifyOrderStatus200JSONResponse OrderStatusState
+
+func (response NotifyOrderStatus200JSONResponse) VisitNotifyOrderStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyOrderStatus400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response NotifyOrderStatus400ApplicationProblemPlusJSONResponse) VisitNotifyOrderStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyOrderStatus401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response NotifyOrderStatus401ApplicationProblemPlusJSONResponse) VisitNotifyOrderStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyOrderStatus403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response NotifyOrderStatus403ApplicationProblemPlusJSONResponse) VisitNotifyOrderStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyOrderStatus404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response NotifyOrderStatus404ApplicationProblemPlusJSONResponse) VisitNotifyOrderStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+// StrictServerInterface represents all server handlers.
+type StrictServerInterface interface {
+	// RefreshCatalog Обновить каталог внеочередно (предоставляет площадка)
+	// (POST /catalog/refresh)
+	RefreshCatalog(ctx context.Context, request RefreshCatalogRequestObject) (RefreshCatalogResponseObject, error)
+	// NotifyOrderStatus Уведомить о смене статуса заказа (предоставляет площадка)
+	// (POST /orders/{orderId}/status)
+	NotifyOrderStatus(ctx context.Context, request NotifyOrderStatusRequestObject) (NotifyOrderStatusResponseObject, error)
+}
+
+type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
+type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
+
+type StrictHTTPServerOptions struct {
+	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
+	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
+}
+
+func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		},
+	}}
+}
+
+func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
+	if options.RequestErrorHandlerFunc == nil {
+		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
+	if options.ResponseErrorHandlerFunc == nil {
+		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
+}
+
+type strictHandler struct {
+	ssi         StrictServerInterface
+	middlewares []StrictMiddlewareFunc
+	options     StrictHTTPServerOptions
+}
+
+// RefreshCatalog operation middleware
+func (sh *strictHandler) RefreshCatalog(w http.ResponseWriter, r *http.Request) {
+	var request RefreshCatalogRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshCatalog(ctx, request.(RefreshCatalogRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshCatalog")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshCatalogResponseObject); ok {
+		if err := validResponse.VisitRefreshCatalogResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// NotifyOrderStatus operation middleware
+func (sh *strictHandler) NotifyOrderStatus(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+	var request NotifyOrderStatusRequestObject
+
+	request.OrderId = orderId
+
+	var body NotifyOrderStatusJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.NotifyOrderStatus(ctx, request.(NotifyOrderStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "NotifyOrderStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(NotifyOrderStatusResponseObject); ok {
+		if err := validResponse.VisitNotifyOrderStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }

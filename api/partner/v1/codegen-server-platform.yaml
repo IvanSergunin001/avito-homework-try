@@ -1,8 +1,9 @@
-# Партнёрская поверхность площадки — та половина контракта, которую реализует она сама.
+# Та половина партнёрского контракта, которую реализует сама площадка (тег `platform`).
 package: partner_v1
 output: internal/platform/adapters/http/partner_v1/server.gen.go
 generate:
   chi-server: true
+  strict-server: true
   models: true
 output-options:
   include-tags:

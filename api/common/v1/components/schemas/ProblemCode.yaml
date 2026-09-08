@@ -1,0 +1,22 @@
+type: string
+description: |
+  Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+  разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+  список — API объявляет и те коды, которых сам не возвращает.
+enum:
+  - validation_failed
+  - not_implemented
+  - internal_error
+  - unauthorized
+  - forbidden
+  - restaurant_not_found
+  - product_not_found
+  - order_not_found
+  - out_of_stock
+  - price_changed
+  - unknown_product
+  - restaurant_closed
+  - order_not_cancellable
+  - idempotency_key_reuse
+  - restaurant_unavailable
+example: validation_failed

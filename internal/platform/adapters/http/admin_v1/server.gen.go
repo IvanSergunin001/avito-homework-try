@@ -4,6 +4,9 @@
 package admin_v1
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -69,49 +72,73 @@ func (e OrderStatus) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	ProblemCodeForbidden           ProblemCode = "forbidden"
-	ProblemCodeOrderNotCancellable ProblemCode = "order_not_cancellable"
-	ProblemCodeOrderNotFound       ProblemCode = "order_not_found"
-	ProblemCodeRestaurantNotFound  ProblemCode = "restaurant_not_found"
-	ProblemCodeUnauthorized        ProblemCode = "unauthorized"
-	ProblemCodeValidationFailed    ProblemCode = "validation_failed"
+	Forbidden             ProblemCode = "forbidden"
+	IdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
+	InternalError         ProblemCode = "internal_error"
+	NotImplemented        ProblemCode = "not_implemented"
+	OrderNotCancellable   ProblemCode = "order_not_cancellable"
+	OrderNotFound         ProblemCode = "order_not_found"
+	OutOfStock            ProblemCode = "out_of_stock"
+	PriceChanged          ProblemCode = "price_changed"
+	ProductNotFound       ProblemCode = "product_not_found"
+	RestaurantClosed      ProblemCode = "restaurant_closed"
+	RestaurantNotFound    ProblemCode = "restaurant_not_found"
+	RestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	Unauthorized          ProblemCode = "unauthorized"
+	UnknownProduct        ProblemCode = "unknown_product"
+	ValidationFailed      ProblemCode = "validation_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
-	case ProblemCodeForbidden:
+	case Forbidden:
 		return true
-	case ProblemCodeOrderNotCancellable:
+	case IdempotencyKeyReuse:
 		return true
-	case ProblemCodeOrderNotFound:
+	case InternalError:
 		return true
-	case ProblemCodeRestaurantNotFound:
+	case NotImplemented:
 		return true
-	case ProblemCodeUnauthorized:
+	case OrderNotCancellable:
 		return true
-	case ProblemCodeValidationFailed:
+	case OrderNotFound:
+		return true
+	case OutOfStock:
+		return true
+	case PriceChanged:
+		return true
+	case ProductNotFound:
+		return true
+	case RestaurantClosed:
+		return true
+	case RestaurantNotFound:
+		return true
+	case RestaurantUnavailable:
+		return true
+	case Unauthorized:
+		return true
+	case UnknownProduct:
+		return true
+	case ValidationFailed:
 		return true
 	default:
 		return false
 	}
 }
 
-// CancelledBy Кто отменил заказ. Отмена саппортом отмечается `support`, а не `restaurant`: заведение
-// после начала готовки отменяет заказ только обращением в саппорт, и в истории должно быть
-// видно, что решение принимал человек площадки.
+// CancelledBy Кто отменил заказ. Отмена заведением после начала готовки идёт через саппорт, поэтому
+// `support` — самостоятельное значение, а не разновидность `restaurant`.
 //
-// Example: support
+// Example: customer
 type CancelledBy string
 
-// Money Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+// Money Сумма в копейках — целое в минорных единицах (почему так, см. README).
 //
 // Example: 45000
 type Money = int64
 
-// NewRestaurant Регистрация заведения. Адрес интеграции задаётся здесь, а не выводится из имени: смена
-// инфраструктуры заведения не должна требовать правок в коде площадки.
+// NewRestaurant Регистрация заведения.
 type NewRestaurant struct {
 	// BaseUrl Базовый адрес заведения, к которому площадка добавляет пути партнёрского контракта.
 	//
@@ -130,12 +157,11 @@ type Order struct {
 	// CancellationReason Example: Закончились продукты
 	CancellationReason *string `json:"cancellation_reason,omitempty"`
 
-	// CancelledBy Кто отменил заказ. Отмена саппортом отмечается `support`, а не `restaurant`: заведение
-	// после начала готовки отменяет заказ только обращением в саппорт, и в истории должно быть
-	// видно, что решение принимал человек площадки.
+	// CancelledBy Кто отменил заказ. Отмена заведением после начала готовки идёт через саппорт, поэтому
+	// `support` — самостоятельное значение, а не разновидность `restaurant`.
 	//
 	//
-	// Example: support
+	// Example: customer
 	CancelledBy *CancelledBy `json:"cancelled_by,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
 
@@ -156,9 +182,7 @@ type Order struct {
 	// Example: cooking
 	Status OrderStatus `json:"status"`
 
-	// Total Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-	// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
-	//
+	// Total Сумма в копейках — целое в минорных единицах (почему так, см. README).
 	//
 	// Example: 45000
 	Total     Money     `json:"total"`
@@ -170,9 +194,7 @@ type OrderItem struct {
 	// Name Example: Круассан с миндалём
 	Name string `json:"name"`
 
-	// Price Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-	// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
-	//
+	// Price Сумма в копейках — целое в минорных единицах (почему так, см. README).
 	//
 	// Example: 45000
 	Price Money `json:"price"`
@@ -192,42 +214,52 @@ type OrderItem struct {
 // Example: cooking
 type OrderStatus string
 
-// Problem Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-// выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-// изменения версии поверхности.
-type Problem struct {
-	// Code Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
-	// перечисление, а расширение списка — изменение версии поверхности.
+// Problem Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+// инструменту саппорта хватает кода причины и текста.
+type Problem = ProblemBase
+
+// ProblemBase Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type ProblemBase struct {
+	// Code Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+	// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+	// список — API объявляет и те коды, которых сам не возвращает.
 	//
 	//
 	// Example: validation_failed
 	Code ProblemCode `json:"code"`
 
 	// Detail Пояснение для человека, привязанное к конкретному случаю.
+	//
+	// Example: limit: допустимы значения от 1 до 100
 	Detail *string `json:"detail,omitempty"`
 
-	// Instance Ссылка на конкретное вхождение проблемы.
+	// Instance Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+	// когда по отказу нужно будет попадать в журнал или в обращение поддержки.
 	Instance *string `json:"instance,omitempty"`
 
 	// Status Код ответа HTTP, продублированный в теле.
 	//
-	// Example: 401
+	// Example: 400
 	Status int `json:"status"`
 
 	// Title Короткое человекочитаемое название проблемы.
 	//
-	// Example: Требуется авторизация
+	// Example: Некорректный запрос
 	Title string `json:"title"`
 
-	// Type Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+	// Type Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+	// причины нет, идентичность несёт `code`.
+	//
 	//
 	// Example: about:blank
 	Type string `json:"type"`
 }
 
-// ProblemCode Машиночитаемая причина отказа. Перечень закрыт: клиент вправе разбирать его как
-// перечисление, а расширение списка — изменение версии поверхности.
+// ProblemCode Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+// список — API объявляет и те коды, которых сам не возвращает.
 //
 // Example: validation_failed
 type ProblemCode string
@@ -253,7 +285,7 @@ type RegisteredRestaurant struct {
 	// Name Example: Пекарня «Батон»
 	Name string `json:"name"`
 
-	// PartnerKey Партнёрский ключ для заголовка `Authorization` партнёрской поверхности.
+	// PartnerKey Партнёрский ключ для заголовка `Authorization` партнёрского API.
 	//
 	// Example: pk_018f2b5c1f4a7c3e9a102b8f5d7c1a01
 	PartnerKey string `json:"partner_key"`
@@ -263,6 +295,9 @@ type RegisteredRestaurant struct {
 type Restaurant struct {
 	// BaseUrl Example: https://baton.example.org
 	BaseUrl string `json:"base_url"`
+
+	// CreatedAt Когда заведение зарегистрировали на площадке.
+	CreatedAt time.Time `json:"created_at"`
 
 	// Id Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
 	Id openapi_types.UUID `json:"id"`
@@ -277,19 +312,22 @@ type Restaurant struct {
 
 	// Name Example: Пекарня «Батон»
 	Name string `json:"name"`
+
+	// UpdatedAt Когда его реквизиты правили последний раз.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RestaurantUpdate Полная замена реквизитов заведения. Флаг активности здесь же: отключение заведения —
-// та же операция правки, а не отдельная ручка, потому что причин отличать их нет.
+// RestaurantUpdate Правка реквизитов заведения: применяются только переданные поля, остальные остаются как
+// были. Пустое тело — не ошибка, а отсутствие изменений.
 type RestaurantUpdate struct {
 	// BaseUrl Example: https://baton.example.org
-	BaseUrl string `json:"base_url"`
+	BaseUrl *string `json:"base_url,omitempty"`
 
 	// IsActive Example: true
-	IsActive bool `json:"is_active"`
+	IsActive *bool `json:"is_active,omitempty"`
 
 	// Name Example: Пекарня «Батон»
-	Name string `json:"name"`
+	Name *string `json:"name,omitempty"`
 }
 
 // SupportCancellation Отмена заказа саппортом. Причина обязательна: заказ отменяется уже после списания
@@ -305,35 +343,44 @@ type OrderId = openapi_types.UUID
 // RestaurantId defines model for RestaurantId.
 type RestaurantId = openapi_types.UUID
 
-// BadRequest Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-// выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-// изменения версии поверхности.
+// UserId defines model for UserId.
+type UserId = openapi_types.UUID
+
+// BadRequest Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+// инструменту саппорта хватает кода причины и текста.
 type BadRequest = Problem
 
-// Conflict Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-// выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-// изменения версии поверхности.
+// Conflict Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+// инструменту саппорта хватает кода причины и текста.
 type Conflict = Problem
 
-// Forbidden Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-// выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-// изменения версии поверхности.
-type Forbidden = Problem
-
-// NotFound Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-// выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-// изменения версии поверхности.
+// NotFound Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+// инструменту саппорта хватает кода причины и текста.
 type NotFound = Problem
 
-// Unauthorized Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой инструмент
-// выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться без
-// изменения версии поверхности.
-type Unauthorized = Problem
+// CancelOrderBySupportParams defines parameters for CancelOrderBySupport.
+type CancelOrderBySupportParams struct {
+	// UserId Идентификатор того, кто обращается: покупателя в клиентском API, сотрудника — в
+	// админском. Не удостоверение, а самопровозглашённое значение, которому площадка верит по
+	// условию задания (README, «Упрощения»). Префикс `X-` не используется — RFC 6648.
+	UserId UserId `json:"User-Id"`
+}
+
+// RegisterRestaurantParams defines parameters for RegisterRestaurant.
+type RegisterRestaurantParams struct {
+	// UserId Идентификатор того, кто обращается: покупателя в клиентском API, сотрудника — в
+	// админском. Не удостоверение, а самопровозглашённое значение, которому площадка верит по
+	// условию задания (README, «Упрощения»). Префикс `X-` не используется — RFC 6648.
+	UserId UserId `json:"User-Id"`
+}
+
+// UpdateRestaurantParams defines parameters for UpdateRestaurant.
+type UpdateRestaurantParams struct {
+	// UserId Идентификатор того, кто обращается: покупателя в клиентском API, сотрудника — в
+	// админском. Не удостоверение, а самопровозглашённое значение, которому площадка верит по
+	// условию задания (README, «Упрощения»). Префикс `X-` не используется — RFC 6648.
+	UserId UserId `json:"User-Id"`
+}
 
 // CancelOrderBySupportJSONRequestBody defines body for CancelOrderBySupport for application/json ContentType.
 type CancelOrderBySupportJSONRequestBody = SupportCancellation
@@ -348,13 +395,13 @@ type UpdateRestaurantJSONRequestBody = RestaurantUpdate
 type ServerInterface interface {
 	// CancelOrderBySupport Отменить заказ по обращению заведения
 	// (POST /orders/{orderId}/cancel)
-	CancelOrderBySupport(w http.ResponseWriter, r *http.Request, orderId OrderId)
+	CancelOrderBySupport(w http.ResponseWriter, r *http.Request, orderId OrderId, params CancelOrderBySupportParams)
 	// RegisterRestaurant Зарегистрировать заведение
 	// (POST /restaurants)
-	RegisterRestaurant(w http.ResponseWriter, r *http.Request)
+	RegisterRestaurant(w http.ResponseWriter, r *http.Request, params RegisterRestaurantParams)
 	// UpdateRestaurant Изменить реквизиты заведения
-	// (PUT /restaurants/{restaurantId})
-	UpdateRestaurant(w http.ResponseWriter, r *http.Request, restaurantId RestaurantId)
+	// (PATCH /restaurants/{restaurantId})
+	UpdateRestaurant(w http.ResponseWriter, r *http.Request, restaurantId RestaurantId, params UpdateRestaurantParams)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -363,19 +410,19 @@ type Unimplemented struct{}
 
 // CancelOrderBySupport Отменить заказ по обращению заведения
 // (POST /orders/{orderId}/cancel)
-func (_ Unimplemented) CancelOrderBySupport(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+func (_ Unimplemented) CancelOrderBySupport(w http.ResponseWriter, r *http.Request, orderId OrderId, params CancelOrderBySupportParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // RegisterRestaurant Зарегистрировать заведение
 // (POST /restaurants)
-func (_ Unimplemented) RegisterRestaurant(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) RegisterRestaurant(w http.ResponseWriter, r *http.Request, params RegisterRestaurantParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // UpdateRestaurant Изменить реквизиты заведения
-// (PUT /restaurants/{restaurantId})
-func (_ Unimplemented) UpdateRestaurant(w http.ResponseWriter, r *http.Request, restaurantId RestaurantId) {
+// (PATCH /restaurants/{restaurantId})
+func (_ Unimplemented) UpdateRestaurant(w http.ResponseWriter, r *http.Request, restaurantId RestaurantId, params UpdateRestaurantParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -403,8 +450,36 @@ func (siw *ServerInterfaceWrapper) CancelOrderBySupport(w http.ResponseWriter, r
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CancelOrderBySupportParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "User-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("User-Id")]; found {
+		var UserId UserId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "User-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "User-Id", valueList[0], &UserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "User-Id", Err: err})
+			return
+		}
+
+		params.UserId = UserId
+
+	} else {
+		err := fmt.Errorf("Header parameter User-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "User-Id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelOrderBySupport(w, r, orderId)
+		siw.Handler.CancelOrderBySupport(w, r, orderId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -417,8 +492,39 @@ func (siw *ServerInterfaceWrapper) CancelOrderBySupport(w http.ResponseWriter, r
 // RegisterRestaurant operation middleware
 func (siw *ServerInterfaceWrapper) RegisterRestaurant(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RegisterRestaurantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "User-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("User-Id")]; found {
+		var UserId UserId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "User-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "User-Id", valueList[0], &UserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "User-Id", Err: err})
+			return
+		}
+
+		params.UserId = UserId
+
+	} else {
+		err := fmt.Errorf("Header parameter User-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "User-Id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RegisterRestaurant(w, r)
+		siw.Handler.RegisterRestaurant(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -443,8 +549,36 @@ func (siw *ServerInterfaceWrapper) UpdateRestaurant(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateRestaurantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "User-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("User-Id")]; found {
+		var UserId UserId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "User-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "User-Id", valueList[0], &UserId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "User-Id", Err: err})
+			return
+		}
+
+		params.UserId = UserId
+
+	} else {
+		err := fmt.Errorf("Header parameter User-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "User-Id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateRestaurant(w, r, restaurantId)
+		siw.Handler.UpdateRestaurant(w, r, restaurantId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -571,11 +705,337 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/restaurants", wrapper.RegisterRestaurant)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/restaurants/{restaurantId}", wrapper.UpdateRestaurant)
+		r.Patch(options.BaseURL+"/restaurants/{restaurantId}", wrapper.UpdateRestaurant)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/orders/{orderId}/cancel", wrapper.CancelOrderBySupport)
 	})
 
 	return r
+}
+
+type BadRequestApplicationProblemPlusJSONResponse Problem
+
+type ConflictApplicationProblemPlusJSONResponse Problem
+
+type NotFoundApplicationProblemPlusJSONResponse Problem
+
+type CancelOrderBySupportRequestObject struct {
+	OrderId OrderId `json:"orderId"`
+	Params  CancelOrderBySupportParams
+	Body    *CancelOrderBySupportJSONRequestBody
+}
+
+type CancelOrderBySupportResponseObject interface {
+	VisitCancelOrderBySupportResponse(w http.ResponseWriter) error
+}
+
+type CancelOrderBySupport200JSONResponse Order
+
+func (response CancelOrderBySupport200JSONResponse) VisitCancelOrderBySupportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrderBySupport400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CancelOrderBySupport400ApplicationProblemPlusJSONResponse) VisitCancelOrderBySupportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrderBySupport404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CancelOrderBySupport404ApplicationProblemPlusJSONResponse) VisitCancelOrderBySupportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrderBySupport409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CancelOrderBySupport409ApplicationProblemPlusJSONResponse) VisitCancelOrderBySupportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterRestaurantRequestObject struct {
+	Params RegisterRestaurantParams
+	Body   *RegisterRestaurantJSONRequestBody
+}
+
+type RegisterRestaurantResponseObject interface {
+	VisitRegisterRestaurantResponse(w http.ResponseWriter) error
+}
+
+type RegisterRestaurant201JSONResponse RegisteredRestaurant
+
+func (response RegisterRestaurant201JSONResponse) VisitRegisterRestaurantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterRestaurant400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterRestaurant400ApplicationProblemPlusJSONResponse) VisitRegisterRestaurantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRestaurantRequestObject struct {
+	RestaurantId RestaurantId `json:"restaurantId"`
+	Params       UpdateRestaurantParams
+	Body         *UpdateRestaurantJSONRequestBody
+}
+
+type UpdateRestaurantResponseObject interface {
+	VisitUpdateRestaurantResponse(w http.ResponseWriter) error
+}
+
+type UpdateRestaurant200JSONResponse Restaurant
+
+func (response UpdateRestaurant200JSONResponse) VisitUpdateRestaurantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRestaurant400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateRestaurant400ApplicationProblemPlusJSONResponse) VisitUpdateRestaurantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRestaurant404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateRestaurant404ApplicationProblemPlusJSONResponse) VisitUpdateRestaurantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+// StrictServerInterface represents all server handlers.
+type StrictServerInterface interface {
+	// CancelOrderBySupport Отменить заказ по обращению заведения
+	// (POST /orders/{orderId}/cancel)
+	CancelOrderBySupport(ctx context.Context, request CancelOrderBySupportRequestObject) (CancelOrderBySupportResponseObject, error)
+	// RegisterRestaurant Зарегистрировать заведение
+	// (POST /restaurants)
+	RegisterRestaurant(ctx context.Context, request RegisterRestaurantRequestObject) (RegisterRestaurantResponseObject, error)
+	// UpdateRestaurant Изменить реквизиты заведения
+	// (PATCH /restaurants/{restaurantId})
+	UpdateRestaurant(ctx context.Context, request UpdateRestaurantRequestObject) (UpdateRestaurantResponseObject, error)
+}
+
+type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
+type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
+
+type StrictHTTPServerOptions struct {
+	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
+	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
+}
+
+func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		},
+	}}
+}
+
+func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
+	if options.RequestErrorHandlerFunc == nil {
+		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
+	if options.ResponseErrorHandlerFunc == nil {
+		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
+}
+
+type strictHandler struct {
+	ssi         StrictServerInterface
+	middlewares []StrictMiddlewareFunc
+	options     StrictHTTPServerOptions
+}
+
+// CancelOrderBySupport operation middleware
+func (sh *strictHandler) CancelOrderBySupport(w http.ResponseWriter, r *http.Request, orderId OrderId, params CancelOrderBySupportParams) {
+	var request CancelOrderBySupportRequestObject
+
+	request.OrderId = orderId
+	request.Params = params
+
+	var body CancelOrderBySupportJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelOrderBySupport(ctx, request.(CancelOrderBySupportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelOrderBySupport")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelOrderBySupportResponseObject); ok {
+		if err := validResponse.VisitCancelOrderBySupportResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RegisterRestaurant operation middleware
+func (sh *strictHandler) RegisterRestaurant(w http.ResponseWriter, r *http.Request, params RegisterRestaurantParams) {
+	var request RegisterRestaurantRequestObject
+
+	request.Params = params
+
+	var body RegisterRestaurantJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegisterRestaurant(ctx, request.(RegisterRestaurantRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegisterRestaurant")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegisterRestaurantResponseObject); ok {
+		if err := validResponse.VisitRegisterRestaurantResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateRestaurant operation middleware
+func (sh *strictHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Request, restaurantId RestaurantId, params UpdateRestaurantParams) {
+	var request UpdateRestaurantRequestObject
+
+	request.RestaurantId = restaurantId
+	request.Params = params
+
+	var body UpdateRestaurantJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateRestaurant(ctx, request.(UpdateRestaurantRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateRestaurant")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateRestaurantResponseObject); ok {
+		if err := validResponse.VisitUpdateRestaurantResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }

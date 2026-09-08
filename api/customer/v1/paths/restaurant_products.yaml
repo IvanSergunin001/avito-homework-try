@@ -10,7 +10,7 @@ get:
     - $ref: '../components/parameters/RestaurantId.yaml'
     - $ref: '../components/parameters/SearchQuery.yaml'
     - $ref: '../components/parameters/Limit.yaml'
-    - $ref: '../components/parameters/Offset.yaml'
+    - $ref: '../../../common/v1/components/parameters/Offset.yaml'
   responses:
     '200':
       description: Страница меню.

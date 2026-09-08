@@ -1,5 +1,0 @@
-type: integer
-minimum: 1
-maximum: 100
-description: Количество единиц товара в позиции заказа.
-example: 2

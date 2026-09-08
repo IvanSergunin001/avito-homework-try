@@ -1,6 +1,0 @@
-description: |
-  Токен есть, но он партнёрский: админские операции им не выполняются, `code` = `forbidden`.
-content:
-  application/problem+json:
-    schema:
-      $ref: '../schemas/Problem.yaml'

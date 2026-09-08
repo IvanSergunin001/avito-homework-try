@@ -6,6 +6,8 @@ post:
     Ключ возвращается один раз — площадка хранит только его хеш.
   tags:
     - onboarding
+  parameters:
+    - $ref: '../../../common/v1/components/parameters/UserId.yaml'
   requestBody:
     required: true
     content:
@@ -21,7 +23,3 @@ post:
             $ref: '../components/schemas/RegisteredRestaurant.yaml'
     '400':
       $ref: '../components/responses/BadRequest.yaml'
-    '401':
-      $ref: '../components/responses/Unauthorized.yaml'
-    '403':
-      $ref: '../components/responses/Forbidden.yaml'

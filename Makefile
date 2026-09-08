@@ -1,6 +1,7 @@
 # Всё, кроме `docker compose`, выполняется внутри контейнеров: локально установленный
 # Go не нужен ни для сборки, ни для линтера, ни для тестов (см. Dockerfile).
 
+API_OUT    ?= .api-artifacts
 TEST_IMAGE ?= avito-kitchen-test
 TEST_ARGS  ?= ./...
 DOCKER_SOCK := /var/run/docker.sock
@@ -27,9 +28,15 @@ logs: ## Логи запущенных служб
 	docker compose logs --follow
 
 # Каталог хоста в сборку не примонтировать (демон Docker живёт снаружи), поэтому
-# результат генерации выгружается из образа-артефакта прямо в рабочее дерево.
+# результат генерации выгружается из образа-артефакта. Выгрузка идёт во временный
+# каталог, а не прямо в рабочее дерево: экспортёр обходит каталог назначения целиком и
+# спотыкается о `./.data`, который Docker создал от root.
 api: ## Собрать спецификации в bundle.yaml и сгенерировать по ним код
-	docker build --target api-artifacts --output type=local,dest=. .
+	rm -rf $(API_OUT)
+	docker build --target api-artifacts --output type=local,dest=$(API_OUT) .
+	cp -a $(API_OUT)/api/. api/
+	cp -a $(API_OUT)/internal/. internal/
+	rm -rf $(API_OUT)
 
 api-check: api ## Проверить, что генерация воспроизводится: повторный прогон без диффа
 	@test -z "$$(git status --porcelain -- api internal)" || { \

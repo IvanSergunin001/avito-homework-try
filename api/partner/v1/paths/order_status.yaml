@@ -11,8 +11,10 @@ post:
   tags:
     - platform
   servers:
-    - url: https://kitchen.avito.ru/api/partner/v1
+    - url: https://kitchen.avito.ru/api/kitchen/v1/partner
       description: Площадка
+    - url: http://localhost:8080/api/kitchen/v1/partner
+      description: Локальный запуск через Compose
   security:
     - partnerKey: []
   parameters:

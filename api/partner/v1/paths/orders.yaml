@@ -11,8 +11,8 @@ post:
   tags:
     - restaurant
   parameters:
-    - $ref: '../components/parameters/IdempotencyKey.yaml'
-    - $ref: '../components/parameters/IdempotencyAttempt.yaml'
+    - $ref: '../../../common/v1/components/parameters/IdempotencyKey.yaml'
+    - $ref: '../../../common/v1/components/parameters/IdempotencyAttempt.yaml'
   requestBody:
     required: true
     content:

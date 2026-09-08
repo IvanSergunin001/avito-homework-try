@@ -34,9 +34,9 @@ properties:
     items:
       $ref: 'OrderItem.yaml'
   total:
-    $ref: 'Money.yaml'
+    $ref: '../../../../common/v1/components/schemas/Money.yaml'
   cancelled_by:
-    $ref: 'CancelledBy.yaml'
+    $ref: '../../../../common/v1/components/schemas/CancelledBy.yaml'
   cancellation_reason:
     type: string
     maxLength: 500

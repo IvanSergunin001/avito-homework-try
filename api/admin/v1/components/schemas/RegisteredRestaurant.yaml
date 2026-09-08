@@ -26,5 +26,5 @@ properties:
     example: true
   partner_key:
     type: string
-    description: Партнёрский ключ для заголовка `Authorization` партнёрской поверхности.
+    description: Партнёрский ключ для заголовка `Authorization` партнёрского API.
     example: pk_018f2b5c1f4a7c3e9a102b8f5d7c1a01

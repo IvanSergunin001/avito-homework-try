@@ -34,17 +34,21 @@ info:
     Ошибки обеих сторон — `application/problem+json` (RFC 7807, актуализирован RFC 9457)
     с дополнительным полем `code`: машиночитаемая причина отказа.
 
-    Общие с клиентской и админской спецификациями схемы (ошибка, пагинация) намеренно
-    продублированы: поверхности живут разными циклами выпуска.
+    Общие с клиентской и админской спецификациями схемы — основа ошибки, список кодов
+    причин, страница выдачи и деньги — лежат в `api/common/v1` и подключаются `$ref`'ом.
+    Партнёру это незаметно: наружу уходит `bundle.yaml`, в котором ссылки уже развёрнуты.
 
 servers:
-  - url: '{restaurantBaseUrl}/api/v1'
+  - url: '{restaurantBaseUrl}/api/kitchen/v1/restaurant'
     description: |
       Заведение. `restaurantBaseUrl` — адрес, который заведение сообщило площадке при
       онбординге; операции с тегом `platform` переопределяют сервер на адрес площадки.
     variables:
       restaurantBaseUrl:
         default: https://restaurant.example.org
+        description: |
+          При локальном запуске через Compose — `http://localhost:8081`; операции с тегом
+          `platform` живут на площадке, `http://localhost:8080`.
 
 tags:
   - name: restaurant

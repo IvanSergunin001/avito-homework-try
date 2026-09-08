@@ -4,8 +4,12 @@
 package partner_v1
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -16,21 +20,33 @@ import (
 
 // Defines values for ProblemCode.
 const (
-	Forbidden           ProblemCode = "forbidden"
-	OrderNotCancellable ProblemCode = "order_not_cancellable"
-	OrderNotFound       ProblemCode = "order_not_found"
-	OutOfStock          ProblemCode = "out_of_stock"
-	PriceChanged        ProblemCode = "price_changed"
-	RestaurantClosed    ProblemCode = "restaurant_closed"
-	Unauthorized        ProblemCode = "unauthorized"
-	UnknownProduct      ProblemCode = "unknown_product"
-	ValidationFailed    ProblemCode = "validation_failed"
+	Forbidden             ProblemCode = "forbidden"
+	IdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
+	InternalError         ProblemCode = "internal_error"
+	NotImplemented        ProblemCode = "not_implemented"
+	OrderNotCancellable   ProblemCode = "order_not_cancellable"
+	OrderNotFound         ProblemCode = "order_not_found"
+	OutOfStock            ProblemCode = "out_of_stock"
+	PriceChanged          ProblemCode = "price_changed"
+	ProductNotFound       ProblemCode = "product_not_found"
+	RestaurantClosed      ProblemCode = "restaurant_closed"
+	RestaurantNotFound    ProblemCode = "restaurant_not_found"
+	RestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	Unauthorized          ProblemCode = "unauthorized"
+	UnknownProduct        ProblemCode = "unknown_product"
+	ValidationFailed      ProblemCode = "validation_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case Forbidden:
+		return true
+	case IdempotencyKeyReuse:
+		return true
+	case InternalError:
+		return true
+	case NotImplemented:
 		return true
 	case OrderNotCancellable:
 		return true
@@ -40,7 +56,13 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case PriceChanged:
 		return true
+	case ProductNotFound:
+		return true
 	case RestaurantClosed:
+		return true
+	case RestaurantNotFound:
+		return true
+	case RestaurantUnavailable:
 		return true
 	case Unauthorized:
 		return true
@@ -87,14 +109,12 @@ type IncomingOrderItem struct {
 	// ExternalId Example: croissant-almond
 	ExternalId string `json:"external_id"`
 
-	// Price Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-	// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
-	//
+	// Price Сумма в копейках — целое в минорных единицах (почему так, см. README).
 	//
 	// Example: 45000
 	Price Money `json:"price"`
 
-	// Quantity Количество единиц позиции в заказе.
+	// Quantity Количество единиц товара в позиции заказа.
 	//
 	// Example: 2
 	Quantity Quantity `json:"quantity"`
@@ -121,9 +141,7 @@ type MenuItem struct {
 	// Name Example: Круассан с миндалём
 	Name string `json:"name"`
 
-	// Price Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-	// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
-	//
+	// Price Сумма в копейках — целое в минорных единицах (почему так, см. README).
 	//
 	// Example: 45000
 	Price Money `json:"price"`
@@ -133,14 +151,12 @@ type MenuItem struct {
 type MenuPage struct {
 	Items []MenuItem `json:"items"`
 
-	// Page Страница выдачи: смещение и размер, которые запросила площадка, плюс общее число
-	// записей. Меню отдаётся страницами, чтобы большой каталог не приходилось отдавать
-	// одним ответом.
+	// Page Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
+	// которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
 	Page PageMeta `json:"page"`
 }
 
-// Money Сумма в копейках. Деньги — целые в минорных единицах: числа с плавающей точкой для
-// денег непригодны, а `numeric` в Go всё равно вырождается в строку или float.
+// Money Сумма в копейках — целое в минорных единицах (почему так, см. README).
 //
 // Example: 45000
 type Money = int64
@@ -162,36 +178,34 @@ type OrderCancellation struct {
 	OrderId openapi_types.UUID `json:"order_id"`
 }
 
-// PageMeta Страница выдачи: смещение и размер, которые запросила площадка, плюс общее число
-// записей. Меню отдаётся страницами, чтобы большой каталог не приходилось отдавать
-// одним ответом.
+// PageMeta Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
+// которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
 type PageMeta struct {
-	// Limit Сколько позиций запрошено на страницу.
+	// Limit Сколько записей запрошено на страницу.
 	//
-	// Example: 100
+	// Example: 20
 	Limit int `json:"limit"`
 
-	// Offset Сколько позиций пропущено от начала выдачи.
+	// Offset Сколько записей пропущено от начала выдачи.
 	//
 	// Example: 0
 	Offset int `json:"offset"`
 
-	// Total Сколько позиций всего в меню заведения.
+	// Total Сколько записей всего удовлетворяет запросу.
 	//
-	// Example: 240
+	// Example: 42
 	Total int64 `json:"total"`
 }
 
-// Problem Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// Problem Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Problem struct {
-	// Code Машиночитаемая причина отказа. Перечень закрыт: обе стороны вправе разбирать его как
-	// перечисление, а расширение списка — изменение версии контракта.
+	// Code Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+	// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+	// список — API объявляет и те коды, которых сам не возвращает.
 	//
 	//
-	// Example: out_of_stock
+	// Example: validation_failed
 	Code ProblemCode `json:"code"`
 
 	// CurrentPrice Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
@@ -199,9 +213,12 @@ type Problem struct {
 	CurrentPrice *Money `json:"current_price,omitempty"`
 
 	// Detail Пояснение для человека, привязанное к конкретному случаю.
+	//
+	// Example: limit: допустимы значения от 1 до 100
 	Detail *string `json:"detail,omitempty"`
 
-	// Instance Ссылка на конкретное вхождение проблемы.
+	// Instance Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+	// когда по отказу нужно будет попадать в журнал или в обращение поддержки.
 	Instance *string `json:"instance,omitempty"`
 
 	// ProductExternalId Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
@@ -213,27 +230,69 @@ type Problem struct {
 
 	// Status Код ответа HTTP, продублированный в теле.
 	//
-	// Example: 409
+	// Example: 400
 	Status int `json:"status"`
 
 	// Title Короткое человекочитаемое название проблемы.
 	//
-	// Example: Товара нет в наличии
+	// Example: Некорректный запрос
 	Title string `json:"title"`
 
-	// Type Идентификатор типа проблемы. Отдельных URI не заводим — причину несёт `code`.
+	// Type Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+	// причины нет, идентичность несёт `code`.
+	//
 	//
 	// Example: about:blank
 	Type string `json:"type"`
 }
 
-// ProblemCode Машиночитаемая причина отказа. Перечень закрыт: обе стороны вправе разбирать его как
-// перечисление, а расширение списка — изменение версии контракта.
+// ProblemBase Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type ProblemBase struct {
+	// Code Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+	// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+	// список — API объявляет и те коды, которых сам не возвращает.
+	//
+	//
+	// Example: validation_failed
+	Code ProblemCode `json:"code"`
+
+	// Detail Пояснение для человека, привязанное к конкретному случаю.
+	//
+	// Example: limit: допустимы значения от 1 до 100
+	Detail *string `json:"detail,omitempty"`
+
+	// Instance Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+	// когда по отказу нужно будет попадать в журнал или в обращение поддержки.
+	Instance *string `json:"instance,omitempty"`
+
+	// Status Код ответа HTTP, продублированный в теле.
+	//
+	// Example: 400
+	Status int `json:"status"`
+
+	// Title Короткое человекочитаемое название проблемы.
+	//
+	// Example: Некорректный запрос
+	Title string `json:"title"`
+
+	// Type Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+	// причины нет, идентичность несёт `code`.
+	//
+	//
+	// Example: about:blank
+	Type string `json:"type"`
+}
+
+// ProblemCode Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+// разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+// список — API объявляет и те коды, которых сам не возвращает.
 //
-// Example: out_of_stock
+// Example: validation_failed
 type ProblemCode string
 
-// Quantity Количество единиц позиции в заказе.
+// Quantity Количество единиц товара в позиции заказа.
 //
 // Example: 2
 type Quantity = int
@@ -253,49 +312,38 @@ type Offset = int
 // OrderId defines model for OrderId.
 type OrderId = openapi_types.UUID
 
-// BadRequest Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// BadRequest Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type BadRequest = Problem
 
-// Conflict Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// Conflict Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type Conflict = Problem
 
-// NotFound Отказ в формате `application/problem+json` (RFC 7807, актуализирован RFC 9457).
-// Поле `code` — расширение стандарта: машиночитаемая причина, по которой вызывающая
-// сторона выбирает ветку поведения. Текст `detail` предназначен человеку и может меняться
-// без изменения версии контракта.
+// NotFound Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+// сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
 type NotFound = Problem
 
 // ListMenuParams defines parameters for ListMenu.
 type ListMenuParams struct {
-	// Limit Размер страницы меню. По умолчанию 100, больше 500 за раз площадка не запрашивает и
-	// заведение не отдаёт: страничная выдача — часть контракта, а не рекомендация.
+	// Limit Размер страницы меню: по умолчанию 100, максимум 500. Страничная выдача — обязанность
+	// заведения, а не рекомендация.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Offset Сколько позиций пропустить от начала выдачи.
+	// Offset Сколько записей пропустить от начала выдачи.
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // AcceptOrderParams defines parameters for AcceptOrder.
 type AcceptOrderParams struct {
-	// IdempotencyKey Ключ идемпотентности повторной отправки заказа — совпадает с `order_id` в теле.
-	// Заведение обязано распознать повтор: второй запрос с тем же ключом не создаёт второй
-	// заказ, а возвращает результат первого.
+	// IdempotencyKey Ключ идемпотентности отправки заказа — совпадает с `order_id` в теле. Повтор с тем же
+	// ключом не создаёт второй заказ, а возвращает результат первого.
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 
-	// IdempotencyAttempt Номер попытки отправки этого заказа, начиная с 1. Площадка увеличивает его на каждом
-	// повторе, чтобы заведение отличало настоящий повтор от первой доставки и не заводило
-	// дубль при ретрае по таймауту.
-	//
-	// Стандарта на номер попытки не существует (стандартизован только сам `Idempotency-Key`),
-	// поэтому заголовок описан здесь как часть контракта. Префикс `X-` не используется: RFC 6648
-	// признал его устаревшим — заголовок всё равно перестаёт быть «экспериментальным», а
-	// переименование потом ломает всех клиентов.
+	// IdempotencyAttempt Номер попытки отправки, начиная с 1: он растёт на каждом повторе, чтобы принимающая
+	// сторона отличала настоящий повтор от первой доставки. Стандарта на номер попытки нет
+	// (стандартизован только `Idempotency-Key`), поэтому заголовок описан здесь как часть
+	// контракта; префикс `X-` не используется — RFC 6648.
 	IdempotencyAttempt IdempotencyAttempt `json:"Idempotency-Attempt"`
 }
 
@@ -613,4 +661,335 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 
 	return r
+}
+
+type BadRequestApplicationProblemPlusJSONResponse Problem
+
+type ConflictApplicationProblemPlusJSONResponse Problem
+
+type NotFoundApplicationProblemPlusJSONResponse Problem
+
+type ListMenuRequestObject struct {
+	Params ListMenuParams
+}
+
+type ListMenuResponseObject interface {
+	VisitListMenuResponse(w http.ResponseWriter) error
+}
+
+type ListMenu200JSONResponse MenuPage
+
+func (response ListMenu200JSONResponse) VisitListMenuResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMenu400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListMenu400ApplicationProblemPlusJSONResponse) VisitListMenuResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOrderRequestObject struct {
+	Params AcceptOrderParams
+	Body   *AcceptOrderJSONRequestBody
+}
+
+type AcceptOrderResponseObject interface {
+	VisitAcceptOrderResponse(w http.ResponseWriter) error
+}
+
+type AcceptOrder200JSONResponse OrderAcceptance
+
+func (response AcceptOrder200JSONResponse) VisitAcceptOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOrder201JSONResponse OrderAcceptance
+
+func (response AcceptOrder201JSONResponse) VisitAcceptOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOrder400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response AcceptOrder400ApplicationProblemPlusJSONResponse) VisitAcceptOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcceptOrder409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response AcceptOrder409ApplicationProblemPlusJSONResponse) VisitAcceptOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelAcceptedOrderRequestObject struct {
+	OrderId OrderId `json:"orderId"`
+	Body    *CancelAcceptedOrderJSONRequestBody
+}
+
+type CancelAcceptedOrderResponseObject interface {
+	VisitCancelAcceptedOrderResponse(w http.ResponseWriter) error
+}
+
+type CancelAcceptedOrder200JSONResponse OrderCancellation
+
+func (response CancelAcceptedOrder200JSONResponse) VisitCancelAcceptedOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelAcceptedOrder400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CancelAcceptedOrder400ApplicationProblemPlusJSONResponse) VisitCancelAcceptedOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelAcceptedOrder404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CancelAcceptedOrder404ApplicationProblemPlusJSONResponse) VisitCancelAcceptedOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelAcceptedOrder409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CancelAcceptedOrder409ApplicationProblemPlusJSONResponse) VisitCancelAcceptedOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+// StrictServerInterface represents all server handlers.
+type StrictServerInterface interface {
+	// ListMenu Меню заведения (реализует заведение)
+	// (GET /menu)
+	ListMenu(ctx context.Context, request ListMenuRequestObject) (ListMenuResponseObject, error)
+	// AcceptOrder Принять заказ (реализует заведение)
+	// (POST /orders)
+	AcceptOrder(ctx context.Context, request AcceptOrderRequestObject) (AcceptOrderResponseObject, error)
+	// CancelAcceptedOrder Отменить принятый заказ (реализует заведение)
+	// (POST /orders/{orderId}/cancel)
+	CancelAcceptedOrder(ctx context.Context, request CancelAcceptedOrderRequestObject) (CancelAcceptedOrderResponseObject, error)
+}
+
+type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
+type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHandlerFunc
+
+type StrictHTTPServerOptions struct {
+	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
+	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
+}
+
+func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		},
+	}}
+}
+
+func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
+	if options.RequestErrorHandlerFunc == nil {
+		options.RequestErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
+	if options.ResponseErrorHandlerFunc == nil {
+		options.ResponseErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
+}
+
+type strictHandler struct {
+	ssi         StrictServerInterface
+	middlewares []StrictMiddlewareFunc
+	options     StrictHTTPServerOptions
+}
+
+// ListMenu operation middleware
+func (sh *strictHandler) ListMenu(w http.ResponseWriter, r *http.Request, params ListMenuParams) {
+	var request ListMenuRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMenu(ctx, request.(ListMenuRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMenu")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMenuResponseObject); ok {
+		if err := validResponse.VisitListMenuResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AcceptOrder operation middleware
+func (sh *strictHandler) AcceptOrder(w http.ResponseWriter, r *http.Request, params AcceptOrderParams) {
+	var request AcceptOrderRequestObject
+
+	request.Params = params
+
+	var body AcceptOrderJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AcceptOrder(ctx, request.(AcceptOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AcceptOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AcceptOrderResponseObject); ok {
+		if err := validResponse.VisitAcceptOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelAcceptedOrder operation middleware
+func (sh *strictHandler) CancelAcceptedOrder(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+	var request CancelAcceptedOrderRequestObject
+
+	request.OrderId = orderId
+
+	var body CancelAcceptedOrderJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelAcceptedOrder(ctx, request.(CancelAcceptedOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelAcceptedOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelAcceptedOrderResponseObject); ok {
+		if err := validResponse.VisitCancelAcceptedOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }

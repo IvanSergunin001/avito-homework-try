@@ -13,9 +13,11 @@ FROM golang:${GO_VERSION}-alpine AS deps
 WORKDIR /src
 # Отдельный слой: правка кода не приводит к повторной загрузке модулей. Кеш-монтирование
 # здесь не используется намеренно — модули должны остаться в слое, иначе образ для тестов
-# скачивал бы их заново на каждом прогоне.
+# скачивал бы их заново на каждом прогоне. Модуля два: службы и шов контрактов (`api`),
+# который вынесен отдельным модулем, чтобы его импортировали снаружи.
 COPY go.mod go.sum ./
-RUN go mod download
+COPY api/go.mod ./api/
+RUN go mod download && cd api && go mod download
 
 # --- исходники ---------------------------------------------------------------
 FROM deps AS source
@@ -41,21 +43,26 @@ RUN redocly lint \
 # Генерируем от собранных документов, а не от дерева ссылок: результат не зависит от
 # того, как кодогенератор разрешает внешние `$ref`. Версия генератора закреплена
 # директивой `tool` в go.mod, поэтому повторный прогон даёт тот же байт в байт код.
+# Конфиги лежат рядом со спеками, а пути в них — от корня репозитория: генерация всегда
+# запускается отсюда. Серверные интерфейсы уезжают к своим адаптерам в `internal`,
+# клиенты остаются в модуле `api`.
 FROM deps AS codegen
-COPY api/codegen ./api/codegen
+COPY api ./api
 COPY --from=bundle /out/api ./api
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go tool oapi-codegen -config api/codegen/platform_customer.yaml         api/customer/v1/bundle.yaml \
- && go tool oapi-codegen -config api/codegen/platform_partner.yaml          api/partner/v1/bundle.yaml \
- && go tool oapi-codegen -config api/codegen/platform_admin.yaml            api/admin/v1/bundle.yaml \
- && go tool oapi-codegen -config api/codegen/platform_restaurant_client.yaml api/partner/v1/bundle.yaml \
- && go tool oapi-codegen -config api/codegen/restaurant_partner.yaml        api/partner/v1/bundle.yaml
+    go tool oapi-codegen -config api/customer/v1/codegen-server.yaml            api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/customer/v1/codegen-client.yaml            api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-server-platform.yaml    api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-server-restaurant.yaml  api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-client.yaml             api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/admin/v1/codegen-server.yaml               api/admin/v1/bundle.yaml \
+ && cd api && go mod tidy
 
 # --- артефакты генерации ------------------------------------------------------
 # Пустой образ с одними результатами: `make api` выгружает его прямо в рабочее дерево
 # (`docker build --output`), потому что каталог хоста в сборку не примонтировать.
 FROM scratch AS api-artifacts
-COPY --from=bundle /out/api /api
+COPY --from=codegen /src/api /api
 COPY --from=codegen /src/internal /internal
 
 # --- сборка службы -----------------------------------------------------------

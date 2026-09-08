@@ -3,3 +3,6 @@
 node_modules/
 # Данные PostgreSQL: том лежит в репозитории, чтобы переживать сброс Docker (см. compose.yaml).
 /.data/
+
+# Временный каталог выгрузки генерации (см. make api)
+.api-artifacts/

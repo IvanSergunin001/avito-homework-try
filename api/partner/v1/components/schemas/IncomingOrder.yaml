@@ -26,7 +26,7 @@ properties:
       $ref: 'IncomingOrderItem.yaml'
   total:
     allOf:
-      - $ref: 'Money.yaml'
+      - $ref: '../../../../common/v1/components/schemas/Money.yaml'
     description: Сумма, посчитанная площадкой. Заведение сверяет её со своим расчётом.
   placed_at:
     type: string

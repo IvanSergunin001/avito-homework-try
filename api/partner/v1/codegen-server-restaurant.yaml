@@ -1,0 +1,11 @@
+# Та половина партнёрского контракта, которую обязано реализовать заведение (тег
+# `restaurant`): коробка сдаёт тот же экзамен, что и заведение со своей системой.
+package: partner_v1
+output: internal/restaurant/adapters/http/partner_v1/server.gen.go
+generate:
+  chi-server: true
+  strict-server: true
+  models: true
+output-options:
+  include-tags:
+    - restaurant

@@ -69,8 +69,8 @@ func TestRunningRestaurantBoxReportsItIsHealthy(t *testing.T) {
 func TestHealthProbeLivesOutsideVersionedAPI(t *testing.T) {
 	srv := newRestaurantBox(t)
 
-	if resp := get(t, srv, "/api/v1/healthz"); resp.Status != http.StatusNotFound {
-		t.Errorf("GET /api/v1/healthz вернул %d, ожидали 404: проба не версионируется", resp.Status)
+	if resp := get(t, srv, "/api/kitchen/v1/healthz"); resp.Status != http.StatusNotFound {
+		t.Errorf("GET /api/kitchen/v1/healthz вернул %d, ожидали 404: проба не версионируется", resp.Status)
 	}
 }
 

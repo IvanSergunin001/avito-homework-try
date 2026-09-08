@@ -5,6 +5,8 @@ required:
   - name
   - base_url
   - is_active
+  - created_at
+  - updated_at
 properties:
   id:
     type: string
@@ -25,3 +27,11 @@ properties:
     type: string
     format: date-time
     description: Когда каталог заведения синхронизировался последний раз.
+  created_at:
+    type: string
+    format: date-time
+    description: Когда заведение зарегистрировали на площадке.
+  updated_at:
+    type: string
+    format: date-time
+    description: Когда его реквизиты правили последний раз.

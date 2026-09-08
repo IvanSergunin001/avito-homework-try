@@ -27,7 +27,7 @@ properties:
     maxLength: 2000
     example: Слоёное тесто, миндальный крем
   price:
-    $ref: 'Money.yaml'
+    $ref: '../../../../common/v1/components/schemas/Money.yaml'
   is_available:
     type: boolean
     description: Ложь — товар в стоп-листе заведения.

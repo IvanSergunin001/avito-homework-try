@@ -3,10 +3,12 @@ module github.com/IvanSergunin001/Test157
 go 1.27.0
 
 require (
+	github.com/IvanSergunin001/Test157/api v0.0.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/knadh/koanf/providers/env/v2 v2.0.1
 	github.com/knadh/koanf/v2 v2.3.6
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -32,7 +34,10 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+
+// Шов контрактов живёт в репозитории отдельным модулем: службы берут его отсюда, а не из
+// сети, — иначе правка спецификации требовала бы выпуска версии, чтобы её увидел код.
+replace github.com/IvanSergunin001/Test157/api => ./api

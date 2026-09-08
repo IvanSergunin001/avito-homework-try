@@ -9,4 +9,4 @@ properties:
     format: uuid
     example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
   quantity:
-    $ref: 'Quantity.yaml'
+    $ref: '../../../../common/v1/components/schemas/Quantity.yaml'
