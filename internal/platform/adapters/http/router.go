@@ -45,14 +45,18 @@ func NewRouter(
 	// Синхронизация каталога достаётся оформлению той же самой: заведение, ответившее
 	// «цена не та», отправляет площадку за меню вне очереди — тем же сценарием, которым
 	// она ходит за ним по расписанию и по просьбе заведения.
-	ordering := application.NewOrdering(restaurants, products, postgres.NewOrders(db),
+	orders := postgres.NewOrders(db)
+	ordering := application.NewOrdering(restaurants, products, orders,
 		restaurant_client.NewOrderIntake(timeouts.OrderPlacement), catalogSync, log)
+	// Продвижение заказа — самостоятельный сценарий над тем же хранилищем: заказ двигают
+	// уведомления заведения, а не оформление, которое к этому моменту давно закончилось.
+	progress := application.NewProgress(orders, log)
 	access := guard{gate: application.NewGatekeeper(restaurants, adminToken), log: log}
 
 	r := httpx.NewRouter(log)
 
 	mountCustomerAPI(r, showcase, catalog, ordering, log)
-	mountPartnerAPI(r, access, catalogSync, log)
+	mountPartnerAPI(r, access, catalogSync, progress, log)
 	mountAdminAPI(r, access, onboarding, log)
 
 	return r, catalogSync

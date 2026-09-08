@@ -153,6 +153,11 @@ type Order struct {
 	CreatedAt time.Time
 	// UpdatedAt — когда заказ последний раз менял состояние.
 	UpdatedAt time.Time
+
+	// changes — переходы, случившиеся с заказом здесь и сейчас: их предстоит записать в
+	// журнал состояний (см. journal.go). Поле закрытое, потому что заполняет его только
+	// сам агрегат: история, которую можно подставить снаружи, историей не является.
+	changes []StatusEvent
 }
 
 // PlaceOrder собирает заказ покупателя и считает его сумму.
@@ -192,7 +197,7 @@ func PlaceOrder(
 		return Order{}, err
 	}
 
-	return Order{
+	order := Order{
 		ID:           id,
 		CustomerID:   customerID,
 		RestaurantID: restaurantID,
@@ -203,7 +208,13 @@ func PlaceOrder(
 		RequestHash:  requestHash(restaurantID, address, items),
 		CreatedAt:    at,
 		UpdatedAt:    at,
-	}, nil
+	}
+	// Появление заказа — тоже изменение его состояния, и журнал начинается с него:
+	// история, начинающаяся со второго перехода, не отвечает на вопрос, когда заказ
+	// попал к площадке и почему он там оказался.
+	order.record(Pending, ByCustomer, at)
+
+	return order, nil
 }
 
 // totalOf проверяет состав заказа и считает его сумму.
@@ -245,6 +256,9 @@ func totalOf(items []OrderItem) (Money, error) {
 // Это единственный способ изменить состояние заказа: правило живёт в матрице, а не в том,
 // кто её вызвал, — обработчик уведомления заведения и админская отмена спрашивают одну и
 // ту же таблицу и не могут разойтись в понимании того, что заказу разрешено.
+//
+// Выполненный переход попадает в журнал состояний (см. journal.go) здесь же: он —
+// единственная точка, где состояние меняется, и записи в журнале не может не быть.
 func (o *Order) TransitionTo(status OrderStatus, by Actor, at time.Time) error {
 	if !slices.Contains(transitions[o.Status][status], by) {
 		return OrderTransitionError{From: o.Status, To: status, By: by}
@@ -252,6 +266,7 @@ func (o *Order) TransitionTo(status OrderStatus, by Actor, at time.Time) error {
 
 	o.Status = status
 	o.UpdatedAt = at
+	o.record(status, by, at)
 
 	return nil
 }

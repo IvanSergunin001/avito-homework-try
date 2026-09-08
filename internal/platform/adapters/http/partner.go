@@ -2,14 +2,17 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
 	"github.com/IvanSergunin001/Test157/internal/platform/adapters/http/partner_v1"
 	"github.com/IvanSergunin001/Test157/internal/platform/application"
+	"github.com/IvanSergunin001/Test157/internal/platform/domain"
 )
 
 // partnerBaseURL — префикс партнёрской поверхности: та половина контракта, которую
@@ -27,18 +30,26 @@ const partnerBaseURL = "/api/partner/v1"
 type partnerAPI struct {
 	partner_v1.Unimplemented
 
-	catalog *application.CatalogSync
-	log     *slog.Logger
+	catalog  *application.CatalogSync
+	progress *application.Progress
+	log      *slog.Logger
 }
 
 // mountPartnerAPI монтирует партнёрскую поверхность на роутер площадки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с контрактом не может.
-func mountPartnerAPI(r chi.Router, access guard, catalog *application.CatalogSync, log *slog.Logger) {
-	api := partnerAPI{catalog: catalog, log: log}
+func mountPartnerAPI(
+	r chi.Router, access guard, catalog *application.CatalogSync,
+	progress *application.Progress, log *slog.Logger,
+) {
+	api := partnerAPI{catalog: catalog, progress: progress, log: log}
 
 	r.Group(func(r chi.Router) {
+		// Проверка токена стоит перед всем остальным, включая разбор тела: посторонний не
+		// должен даже узнать, что запрос неверно составлен, — ответ «у вас опечатка в
+		// поле» рассказывает о поверхности больше, чем ответ «вас сюда не пускают».
 		r.Use(access.require(application.RolePartner, partnerRefusals))
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, api.refuseOversizedBody))
 
 		partner_v1.HandlerWithOptions(api, partner_v1.ChiServerOptions{
 			BaseURL:    partnerBaseURL,
@@ -78,6 +89,109 @@ func (a partnerAPI) RefreshCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// NotifyOrderStatus принимает уведомление заведения о смене статуса заказа.
+//
+// Так и только так статус заказа двигается после того, как заведение за него взялось:
+// площадка ничего не опрашивает — она узнаёт новости от той стороны, которая их знает.
+//
+// Ответ `200` заведение получает и тогда, когда его уведомление ничего не изменило:
+// повтор, опоздавшее уведомление и уведомление о заказе, который уже прожил свою жизнь,
+// приняты — повторять их незачем. В теле ответа действующий статус заказа, и по нему
+// видно, применилось уведомление или опоздало.
+//
+// Правила переходов здесь не проверяются вовсе: можно ли заказу отсюда туда и вправе ли
+// этого требовать заведение, решает его агрегат — тот же самый, который отвечает на этот
+// вопрос покупателю и саппорту.
+func (a partnerAPI) NotifyOrderStatus(w http.ResponseWriter, r *http.Request, orderID partner_v1.OrderId) {
+	caller, ok := callerFrom(r.Context())
+	if !ok {
+		writeInternalFailure(a.log, w, r, errors.New("партнёрская операция выполнена без опознания"))
+
+		return
+	}
+
+	var body partner_v1.StatusNotification
+	if err := decodeBody(r, &body, "status", "occurred_at"); err != nil {
+		a.refuseNotification(w, r, domain.InvalidOrderError{Reason: err.Error()})
+
+		return
+	}
+	// Перечень статусов уведомления закрыт контрактом, и проверяет его порождённое по
+	// контракту перечисление, а не площадка своим списком: `pending` и `under_review`
+	// ставит она сама, и уведомление о них — не опоздание, а нарушение контракта.
+	if !body.Status.Valid() {
+		a.refuseNotification(w, r, domain.InvalidOrderError{
+			Reason: fmt.Sprintf("status: %q — не то состояние, о котором уведомляет заведение", body.Status),
+		})
+
+		return
+	}
+
+	notice := application.StatusNotice{
+		// Словарь состояний у площадки и у заведения общий — тот, что объявлен
+		// контрактом, — поэтому перевода между ними нет и разойтись им негде.
+		Status:     domain.OrderStatus(body.Status),
+		OccurredAt: body.OccurredAt,
+	}
+	if body.Reason != nil {
+		notice.Reason = *body.Reason
+	}
+
+	order, err := a.progress.Notify(r.Context(), caller.Partner, orderID, notice)
+	if err != nil {
+		a.refuseNotification(w, r, err)
+
+		return
+	}
+
+	httpx.WriteJSON(r.Context(), w, http.StatusOK, partner_v1.OrderStatusState{
+		OrderId: order.ID,
+		Status:  partner_v1.OrderStatusStateStatus(order.Status),
+	})
+}
+
+// refuseNotification отвечает на ошибку приёма уведомления.
+//
+// Отказ матрицы переходов доезжает заведению как непринятый запрос (`400`), а не как
+// доменный конфликт: уведомление о состоянии, в которое заказ отсюда не переходит, —
+// это расхождение заведения с контрактом, а не спор о судьбе заказа. Из ответа видно,
+// что именно не сошлось: в `detail` — переход, которого потребовали.
+//
+// Заказ чужого заведения неотличим от несуществующего: по разным ответам перебор
+// идентификаторов рассказал бы заведению, какие заказы есть у соседей.
+func (a partnerAPI) refuseNotification(w http.ResponseWriter, r *http.Request, err error) {
+	var (
+		invalid    domain.InvalidOrderError
+		transition domain.OrderTransitionError
+	)
+
+	switch {
+	case errors.Is(err, domain.ErrOrderNotFound):
+		writePartnerProblem(w, r, http.StatusNotFound, partner_v1.ProblemCodeOrderNotFound,
+			"Заказ не найден", "заказа с таким идентификатором у вас нет")
+	case errors.As(err, &transition):
+		a.log.WarnContext(r.Context(), "restaurant notified about an impossible transition",
+			slog.Any("error", transition))
+		writePartnerProblem(w, r, http.StatusBadRequest, partner_v1.ProblemCodeValidationFailed,
+			"Недопустимый переход", transition.Error())
+	case errors.As(err, &invalid):
+		writePartnerProblem(w, r, http.StatusBadRequest, partner_v1.ProblemCodeValidationFailed,
+			"Некорректное уведомление", invalid.Reason)
+	default:
+		writeInternalFailure(a.log, w, r, err)
+	}
+}
+
+// refuseOversizedBody отвечает на запрос, тело которого больше допустимого.
+//
+// Код причины — `validation_failed`: запрос не прошёл проверку, и другого кода на это в
+// закрытом перечне контракта нет.
+func (a partnerAPI) refuseOversizedBody(w http.ResponseWriter, r *http.Request) {
+	writePartnerProblem(w, r, http.StatusRequestEntityTooLarge, partner_v1.ProblemCodeValidationFailed,
+		"Слишком большое тело запроса",
+		fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes))
 }
 
 // partnerRefusals — отказы в доступе к партнёрской поверхности в её собственной схеме.
