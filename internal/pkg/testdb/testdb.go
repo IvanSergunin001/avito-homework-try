@@ -126,12 +126,13 @@ type migrationSet struct {
 	versionTable string
 }
 
-// migrationSets перечисляет контексты в том же порядке, в каком их накатывает шаг запуска.
+// migrationSets перечисляет контексты схем в том же порядке, в каком их накатывает шаг
+// запуска. Следом шаг запуска накатывает seed, но тестовая оснастка намеренно его пропускает.
 //
 // Тот же перечень повторяется там, где Go не дотягивается: в скрипте шага миграций и в
 // заготовке новой миграции (`Dockerfile`, цели `migrate` и `migration-draft`), в значении
-// по умолчанию для `context` (`Makefile`) и в таблице контекстов (`README.md`). Третий
-// контекст или переименование правятся во всех этих местах разом.
+// по умолчанию для `context` (`Makefile`) и в таблице контекстов (`README.md`). Новый
+// контекст схемы или переименование правятся во всех этих местах разом.
 var migrationSets = []migrationSet{
 	{name: "площадка", files: platformmigrations.FS, versionTable: platformmigrations.VersionTable},
 	{name: "коробка заведения", files: boxmigrations.FS, versionTable: boxmigrations.VersionTable},

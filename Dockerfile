@@ -59,6 +59,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
  && go tool oapi-codegen -config api/partner/v1/codegen-server-restaurant.yaml     api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/partner/v1/codegen-client.yaml                api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/admin/v1/codegen-server.yaml                  api/admin/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/admin/v1/codegen-client.yaml                  api/admin/v1/bundle.yaml \
  && go tool oapi-codegen -config api/restaurant/operator/v1/codegen-server.yaml    api/restaurant/operator/v1/bundle.yaml \
  && cd api && go mod tidy
 
@@ -91,7 +92,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM source AS migration-journals
 RUN --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p /journals \
- && for context in platform restaurant; do \
+ && for context in platform restaurant platform_seed; do \
         go run ./internal/tools/migrationjournal "${context}" > "/journals/${context}"; \
     done
 
@@ -102,20 +103,25 @@ FROM alpine:3.22 AS migrate
 COPY --from=goose /go/bin/goose /usr/local/bin/goose
 COPY internal/platform/migrations/*.sql /migrations/platform/
 COPY internal/restaurant/migrations/*.sql /migrations/restaurant/
+# Демонстрационные данные — отдельный контекст со своим журналом: они часть запуска демо,
+# а не часть схемы. Тестам они не накатываются (см. internal/pkg/testdb), иначе каждый
+# тест, который считает заведения, считал бы вместе со своими ещё и демонстрационное.
+COPY internal/platform/migrations/seed/*.sql /migrations/platform_seed/
 COPY --from=migration-journals /journals /journals
 # У каждого контекста свой каталог миграций и свой журнал применённых; имя журнала лежит
 # рядом, в /journals/<контекст>, и приходит из Go-константы. Журналы лежат в public,
 # а не в самих схемах: goose создаёт журнал до первой миграции, а первая миграция как раз
-# и создаёт схему.
+# и создаёт схему. Демо-данные идут последними: они вставляют строки в таблицы, которые
+# заводят миграции схемы.
 COPY <<'SCRIPT' /usr/local/bin/migrate
 #!/bin/sh
 set -eu
 
-# Перечень контекстов повторяется там, где Go не дотягивается: здесь, в стадии
-# `migration-journals`, в значении `context` по умолчанию (Makefile) и в таблице
-# контекстов (README.md). Третий контекст правится во всех этих местах разом, и в
-# `migrationSets` (internal/pkg/testdb) тоже.
-for context in platform restaurant; do
+# Перечень контекстов шага запуска повторяется здесь и в стадии `migration-journals`, а
+# их имена документирует README. `platform` и `restaurant` дополнительно перечислены в
+# Makefile и `migrationSets` (internal/pkg/testdb); `platform_seed` там намеренно нет —
+# заготовки seed создаются не общей командой, а тестам демо-данные не нужны.
+for context in platform restaurant platform_seed; do
 	echo "== ${context}: goose $*"
 	goose -table "$(cat "/journals/${context}")" -dir "/migrations/${context}" "$@"
 done
