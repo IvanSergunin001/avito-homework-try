@@ -391,6 +391,64 @@ func TestCancelledOrderRemembersWhoCancelledItAndWhy(t *testing.T) {
 	}
 }
 
+func TestCustomerCancellingAnOrderThatIsAlreadyCancelledChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	order := orderIn(t, domain.UnderReview)
+	if err := order.Cancel(domain.ByRestaurant, "Закончились продукты", placedAt); err != nil {
+		t.Fatalf("заведение не отменило заказ: %v", err)
+	}
+
+	// Покупатель нажимает «Отменить» на заказе, который отменило заведение: отказом это
+	// не является — заказ отменён, чего покупатель и хотел, — и переписывать чужую отмену
+	// его нажатие не должно.
+	cancelled, err := order.CancelByCustomer(placedAt)
+	if err != nil {
+		t.Fatalf("повторная отмена отказана: %v", err)
+	}
+	if cancelled {
+		t.Error("повторная отмена объявлена изменением заказа: менять в отменённом заказе нечего")
+	}
+	if order.CancelledBy != domain.ByRestaurant || order.CancellationReason != "Закончились продукты" {
+		t.Errorf("отмена записана на %q с причиной %q: нажатие покупателя переписало чужую отмену",
+			order.CancelledBy, order.CancellationReason)
+	}
+}
+
+func TestCustomerDoesNotCancelAnOrderThatWasAlreadyDelivered(t *testing.T) {
+	t.Parallel()
+
+	order := orderIn(t, domain.Completed)
+
+	if _, err := order.CancelByCustomer(placedAt); err == nil {
+		t.Error("покупатель отменил доставленный заказ: отменять в нём нечего")
+	}
+	if order.Status != domain.Completed {
+		t.Errorf("статус заказа %q, ожидали %q", order.Status, domain.Completed)
+	}
+}
+
+func TestCustomerCancellationIsRecordedAsMadeByTheCustomerAndWithoutAReason(t *testing.T) {
+	t.Parallel()
+
+	order := orderIn(t, domain.Confirmed)
+
+	cancelled, err := order.CancelByCustomer(placedAt)
+	if err != nil {
+		t.Fatalf("покупатель не отменил подтверждённый заказ: %v", err)
+	}
+	if !cancelled {
+		t.Fatal("отмена не объявлена изменением заказа, хотя заказ был живым")
+	}
+	if order.CancelledBy != domain.ByCustomer {
+		t.Errorf("инициатор отмены %q, ожидали %q", order.CancelledBy, domain.ByCustomer)
+	}
+	if order.CancellationReason != "" {
+		t.Errorf("причина отмены %q: покупатель объяснять свою отмену не обязан",
+			order.CancellationReason)
+	}
+}
+
 func TestCancellationByAnyoneButTheCustomerRequiresAReasonTheCustomerWillSee(t *testing.T) {
 	t.Parallel()
 

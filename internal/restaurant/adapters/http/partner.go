@@ -117,12 +117,6 @@ func (a partnerAPI) ListMenu(
 	}, nil
 }
 
-func (partnerAPI) CancelAcceptedOrder(
-	context.Context, partner_v1.CancelAcceptedOrderRequestObject,
-) (partner_v1.CancelAcceptedOrderResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
-}
-
 // contractItem переводит позицию меню в схему партнёрского контракта.
 //
 // Цена уезжает тем же целым числом копеек, каким хранится: перевод в дробное число по
@@ -166,6 +160,20 @@ var partnerProblems = problem.Writer[partner_v1.ProblemBase, partner_v1.ProblemC
 	MaxRequestBytes: maxRequestBodyBytes,
 	FailureTitle:    "Внутренняя ошибка коробки",
 	Surface:         "partner",
+}
+
+// partnerFailure достраивает основу отказа до расширенной схемы. Часть ответов
+// контракта умеет говорить больше — называть позицию меню и её актуальную цену, — и
+// сгенерированный тип у них поэтому другой.
+func partnerFailure(base partner_v1.ProblemBase) partner_v1.Problem {
+	return partner_v1.Problem{
+		Code:     base.Code,
+		Detail:   base.Detail,
+		Instance: base.Instance,
+		Status:   base.Status,
+		Title:    base.Title,
+		Type:     base.Type,
+	}
 }
 
 // writePartnerFailure отвечает, когда обработчик вернул ошибку: `501` на операцию,
@@ -235,6 +243,91 @@ func (a partnerAPI) AcceptOrder(
 	}
 
 	return partner_v1.AcceptOrder200JSONResponse(response), nil
+}
+
+// CancelAcceptedOrder отменяет заказ по просьбе площадки.
+//
+// Так до заведения доезжает отмена покупателем: решение принято на площадке, а коробка
+// снимает заказ с кухни и возвращает продукты в оборот. Отменить она соглашается, пока
+// продукты не потрачены; с началом готовки — `409` с кодом `order_not_cancellable`, и
+// дальше такой случай разбирает саппорт площадки, а не повтор вызова.
+//
+// Повторная просьба отменить уже отменённый заказ отвечает тем же `200` и тем же
+// временем отмены: площадка повторяет вызов, не получив ответа, и ломаться на повторе
+// приём не должен — а остаток второй раз в меню не возвращается.
+//
+// Заказ называется идентификатором площадки: своей нумерации коробки она не знает, и
+// контракт спрашивает именно его.
+func (a partnerAPI) CancelAcceptedOrder(
+	ctx context.Context, request partner_v1.CancelAcceptedOrderRequestObject,
+) (partner_v1.CancelAcceptedOrderResponseObject, error) {
+	order, err := a.orders.Cancel(ctx, request.OrderId, cancellationReason(request.Body))
+	if err != nil {
+		return a.cancellationFailure(err)
+	}
+
+	a.log.InfoContext(ctx, "order cancelled by the platform",
+		slog.String("order_id", order.ID.String()),
+		slog.String("platform_order_id", order.PlatformOrderID.String()))
+
+	return partner_v1.CancelAcceptedOrder200JSONResponse{
+		// Наружу уезжает идентификатор заказа площадки, а не собственный идентификатор
+		// коробки: площадка сверяет ответ со своим заказом.
+		OrderId:     order.PlatformOrderID,
+		CancelledAt: order.UpdatedAt,
+	}, nil
+}
+
+// cancellationReason достаёт из просьбы причину отмены, которую площадка передаёт
+// оператору.
+//
+// Тела у просьбы может не быть вовсе — контракт его не требует: отмену объясняют, но
+// объяснение не обязательно, и его отсутствие не повод не отменять заказ. Пустое тело
+// разбирается в пустую причину, а не в отказ.
+func cancellationReason(body *partner_v1.CancelAcceptedOrderJSONRequestBody) string {
+	if body == nil || body.Reason == nil {
+		return ""
+	}
+
+	return *body.Reason
+}
+
+// cancellationFailure переводит ожидаемый отказ отмены в типизированный ответ контракта.
+//
+// Заказ, которого коробка не принимала, — `404`: площадка просит отменить то, чего у
+// заведения нет, и молчаливое согласие с этим означало бы, что она считает отменённым
+// заказ, о котором здесь не знают.
+func (a partnerAPI) cancellationFailure(
+	err error,
+) (partner_v1.CancelAcceptedOrderResponseObject, error) {
+	var invalid domain.InvalidOrderError
+
+	switch {
+	case errors.Is(err, domain.ErrOrderNotFound):
+		return partner_v1.CancelAcceptedOrder404ApplicationProblemPlusJSONResponse{
+			NotFoundApplicationProblemPlusJSONResponse: partner_v1.
+				NotFoundApplicationProblemPlusJSONResponse(partnerProblemBody(
+					http.StatusNotFound, partner_v1.OrderNotFound, "Заказ не найден",
+					"заказа с таким идентификатором заведение не принимало")),
+		}, nil
+	case errors.Is(err, domain.ErrOrderNotCancellable):
+		return partner_v1.CancelAcceptedOrder409ApplicationProblemPlusJSONResponse{
+			ConflictApplicationProblemPlusJSONResponse: partner_v1.
+				ConflictApplicationProblemPlusJSONResponse(partnerFailure(partnerProblemBody(
+					http.StatusConflict, partner_v1.OrderNotCancellable,
+					"Заказ уже нельзя отменить",
+					"заведение начало готовить заказ: продукты потрачены — отмена только через саппорт"))),
+		}, nil
+	case errors.As(err, &invalid):
+		return partner_v1.CancelAcceptedOrder400ApplicationProblemPlusJSONResponse{
+			BadRequestApplicationProblemPlusJSONResponse: partner_v1.
+				BadRequestApplicationProblemPlusJSONResponse(partnerProblemBody(
+					http.StatusBadRequest, partner_v1.ValidationFailed,
+					"Некорректная отмена", invalid.Reason)),
+		}, nil
+	default:
+		return nil, err
+	}
 }
 
 // placedAt приводит время оформления заказа к значению: площадка не обязана его

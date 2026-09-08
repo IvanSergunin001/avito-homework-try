@@ -121,36 +121,6 @@ func TestCatalogRefusesPageSizeThatIsNotANumber(t *testing.T) {
 	}
 }
 
-// TestOperationDescribedByContractButNotYetImplementedAnswersNotImplemented закрепляет
-// решение: маршрут существует потому, что существует контракт, а обработчик
-// подставляется на своём этапе.
-//
-// Запрос идёт сгенерированным клиентом: `501` контрактом не описан — его в ответах
-// операции нет, — поэтому типизированного поля под него у клиента тоже нет, и тело
-// разбирается как отказ вручную.
-func TestOperationDescribedByContractButNotYetImplementedAnswersNotImplemented(t *testing.T) {
-	t.Parallel()
-
-	platform := newPlatform(t)
-
-	resp, err := platform.catalog(t).CancelOrderWithResponse(context.Background(),
-		uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03"),
-		&customer.CancelOrderParams{UserId: uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04")})
-	if err != nil {
-		t.Fatalf("отменить заказ: %v", err)
-	}
-
-	document := asRefusal(t, response{
-		Status:      resp.HTTPResponse.StatusCode,
-		ContentType: resp.HTTPResponse.Header.Get("Content-Type"),
-		Body:        resp.Body,
-	}, http.StatusNotImplemented)
-
-	if document.Code != string(customer.NotImplemented) {
-		t.Errorf("код отказа %q, ожидали %q", document.Code, customer.NotImplemented)
-	}
-}
-
 // restaurantNames — названия заведений страницы в том порядке, в каком их отдала площадка.
 func restaurantNames(page customer.RestaurantPage) []string {
 	return names(page.Items, func(item customer.Restaurant) string { return item.Name })

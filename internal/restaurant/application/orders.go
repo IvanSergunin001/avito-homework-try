@@ -51,6 +51,18 @@ type IncomingOrders interface {
 	// заказа нет — domain.ErrOrderNotFound.
 	Reject(ctx context.Context, id uuid.UUID, decide func(order *domain.Order) error) (domain.Order, error)
 
+	// Cancel отменяет заказ, о котором просит площадка: читает заказ по идентификатору
+	// площадки под блокировкой, отдаёт его решению decide и, если решение изменило заказ,
+	// записывает отмену и возвращает в меню списанные под заказ остатки — всё одной
+	// транзакцией. Ложь во втором результате decide означает повтор просьбы: заказ уже
+	// отменён, и второй раз ни писать, ни возвращать остатки нечего. Если заказа нет —
+	// domain.ErrOrderNotFound.
+	Cancel(
+		ctx context.Context,
+		platformOrderID uuid.UUID,
+		decide func(order *domain.Order) (bool, error),
+	) (domain.Order, error)
+
 	// InWork перечисляет заказы, которые находятся в одном из перечисленных состояний.
 	// Состояния приходят снаружи, а не выписаны в хранилище: какой заказ ещё двигается
 	// дальше, знает предметная область.
@@ -125,5 +137,22 @@ func (o *Orders) Advance(ctx context.Context, id uuid.UUID, to domain.OrderStatu
 func (o *Orders) Reject(ctx context.Context, id uuid.UUID, reason string) (domain.Order, error) {
 	return o.orders.Reject(ctx, id, func(order *domain.Order) error {
 		return order.Reject(reason)
+	})
+}
+
+// Cancel — площадка просит отменить принятый заказ: так до заведения доезжает отмена
+// покупателем.
+//
+// Заказ называется идентификатором площадки — тем, которым его передавали: своей
+// нумерации коробки площадка не знает. Отменить ли заказ, решает он сам: до начала
+// готовки продукты не потрачены, а дальше коробка отказывает — такие случаи разбирает
+// саппорт площадки.
+//
+// Уведомление об отмене площадке в очередь не кладётся, и это не пропуск: очередь везёт
+// ей новости с кухни, а отмену затеяла она сама — эхо собственного решения не сообщает
+// ей ничего, зато стоит доставки и попадает в журнал заказа второй записью.
+func (o *Orders) Cancel(ctx context.Context, platformOrderID uuid.UUID, reason string) (domain.Order, error) {
+	return o.orders.Cancel(ctx, platformOrderID, func(order *domain.Order) (bool, error) {
+		return order.CancelOnRequest(reason)
 	})
 }

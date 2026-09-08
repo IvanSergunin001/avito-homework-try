@@ -72,6 +72,12 @@ type box struct {
 	// заказ принимается. Отдельно от answer: заведение, не берущее заказ, меню отдаёт
 	// по-прежнему — и именно за меню площадка идёт следом, узнав, что цена разошлась.
 	refusal *boxRefusal
+	// cancellations — отмены, которые площадка донесла до заведения, в порядке приезда.
+	cancellations []cancellation
+	// cancelRefusal — отказ, которым заведение отвечает на отмену; nil означает, что
+	// отмена принимается. Отдельно от refusal: заведение, начавшее готовить заказ,
+	// принимает новые заказы по-прежнему, а отменить уже начатый не даёт.
+	cancelRefusal *boxRefusal
 }
 
 // newBox поднимает заведение с пустым меню.
@@ -97,6 +103,12 @@ func (b *box) handle(w http.ResponseWriter, r *http.Request) {
 
 	if answer != nil {
 		answer(w, r)
+
+		return
+	}
+
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/cancel") {
+		b.cancelOrder(w, r)
 
 		return
 	}
