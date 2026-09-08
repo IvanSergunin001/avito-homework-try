@@ -64,7 +64,7 @@ cmd/platform, cmd/restaurant
 internal/platform/{domain, application, adapters/{http, postgres, restaurant_client}, migrations}
 internal/restaurant/{domain, application, adapters/{http, postgres, platform_client}, migrations}
 internal/pkg/{config, problem, logger, spec, testdb}
-api/{customer,partner,admin,operator,common}/v1/{openapi.yaml, paths/*.yaml, components/{schemas,parameters,responses}.yaml, bundle.yaml, codegen-*.yaml}
+api/{customer,partner,admin,restaurant/operator,common}/v1/{openapi.yaml, paths/*.yaml, components/{schemas,parameters,responses}.yaml, bundle.yaml, codegen-*.yaml}
 api/{customer,partner}/v1/client.gen.go   api/go.mod
 docs/{PLAN.md, TASK.md, adr, puml, img}
 compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
@@ -75,6 +75,12 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 остаётся **одним** документом на две стороны: заведению, которое интегрируется, нужны обе половины сразу,
 поэтому в нём два сервера — обязательства коробки под `/api/kitchen/v1/restaurant`, ручки площадки под
 `/api/kitchen/v1/partner`.
+
+Документы, которые хостит коробка, лежат под `api/restaurant/`, как и в пути: рабочее место оператора — это
+`api/restaurant/operator/v1` при `/api/kitchen/v1/restaurant/operator`. Плоско рядом с площадочными
+документами оператор не встал по той же причине, по какой не встал в пути (§4): это часть коробки, а не
+самостоятельный продукт. Партнёрский контракт под `restaurant/` не уезжает — он общий для двух сторон, и
+хозяин у него не один.
 
 Конфиги кодогенерации лежат рядом со спекой, по которой генерируют (`codegen-server.yaml`,
 `codegen-client.yaml`), а не отдельным каталогом: спека и то, что из неё рождается, правятся вместе.
@@ -98,8 +104,9 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 параметры (`User-Id`, `offset`, заголовки идемпотентности) и общие ответы (400, 401, 403, 404) не
 дублируются, а лежат в `api/common/v1/components/` и подключаются `$ref`'ом из всех спек. Общий ответ несёт
 общую основу `ProblemBase`: у этих кодов документу нечего добавить сверх неё. Отказ по правилам предметной
-области (409 и его соседи) остаётся у документа — там в теле нужны позиция и цена, то есть свой `Problem`. Своё поле документ добавляет к общей
-основе через `allOf` — так `Problem` клиентского API несёт `product_id`, не заводя второй копии RFC-схемы.
+области (409 и его соседи) остаётся у документа — там в теле нужны позиция и цена, то есть свой `Problem`.
+Своё поле документ добавляет к общей основе через `allOf` — так `Problem` клиентского API несёт
+`product_id`, не заводя второй копии RFC-схемы.
 Потолок страницы общим не стал: у витрины и у меню он разный, и параметр `limit` каждый документ объявляет
 сам. Самодостаточность публикуемого артефакта от этого не страдает: наружу
 уходит `bundle.yaml`, в котором ссылки уже развёрнуты, — то есть дублировать исходники ради партнёра незачем.
