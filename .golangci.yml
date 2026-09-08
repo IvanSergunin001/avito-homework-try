@@ -12,6 +12,7 @@ linters:
   enable:
     - bodyclose      # не закрытое тело ответа — утечка соединений в клиенте площадки
     - contextcheck   # запрос наружу обязан наследовать контекст входящего запроса
+    - depguard       # правило слоёв: домен не импортирует инфраструктуру
     - errorlint      # сравнение ошибок через errors.Is/As, а не ==
     - gocritic
     - gosec
@@ -26,6 +27,33 @@ linters:
     - whitespace
 
   settings:
+    depguard:
+      # Слои идут в одну сторону: `domain` -> `application` -> `adapters`. Держит это
+      # правило линтер, а не дисциплина: домен, знающий про HTTP или про базу, нельзя ни
+      # прочитать, ни проверить в отрыве от инфраструктуры, а замечают такой импорт обычно
+      # тогда, когда он уже оброс кодом.
+      rules:
+        domain:
+          files:
+            - "**/internal/platform/domain/**"
+            - "**/internal/restaurant/domain/**"
+          deny:
+            - pkg: net/http
+              desc: домен не ходит по сети — HTTP живёт в adapters/http
+            - pkg: database/sql
+              desc: домен не знает про базу — SQL живёт в adapters/postgres
+            - pkg: github.com/jackc/pgx
+              desc: домен не знает про драйвер базы — он живёт в adapters/postgres
+            - pkg: github.com/IvanSergunin001/Test157/internal/pkg/httpx
+              desc: обвязка HTTP — инфраструктура, домену она не видна
+            - pkg: github.com/IvanSergunin001/Test157/internal/platform/adapters
+              desc: adapters импортирует domain, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/restaurant/adapters
+              desc: adapters импортирует domain, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/platform/application
+              desc: application импортирует domain, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/restaurant/application
+              desc: application импортирует domain, не наоборот
     sloglint:
       # Ключ-значение вперемешку с slog.Attr читается хуже, чем один стиль.
       attr-only: true
