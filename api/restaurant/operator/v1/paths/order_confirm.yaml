@@ -1,0 +1,24 @@
+post:
+  operationId: confirmOrder
+  summary: Подтвердить заказ
+  description: |
+    Оператор берётся за заказ: заведение выполнит его, и площадка сообщит об этом
+    покупателю. Подтвердить можно только заказ на рассмотрении — уже подтверждённый или
+    отклонённый заказ отвечает `409`.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters.yaml#/OrderId'
+  responses:
+    '200':
+      description: Заказ подтверждён.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../components/responses.yaml#/OrderNotFound'
+    '409':
+      $ref: '../components/responses.yaml#/Conflict'

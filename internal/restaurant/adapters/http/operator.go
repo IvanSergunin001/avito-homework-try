@@ -30,19 +30,20 @@ const (
 	OperatorMenuPageMax = 100
 )
 
-// operatorAPI — рабочее место оператора заведения: меню, стоп-лист и остатки. Это то,
-// чем заведение без своих систем заменяет собственный бэкенд, — площадка об этом API
-// не знает и видит только партнёрскую выдачу меню.
+// operatorAPI — рабочее место оператора заведения: меню, стоп-лист, остатки и входящие
+// заказы. Это то, чем заведение без своих систем заменяет собственный бэкенд, — площадка
+// об этом API не знает и видит только партнёрскую выдачу меню и свои заказы.
 type operatorAPI struct {
-	menu *application.Menu
-	log  *slog.Logger
+	menu   *application.Menu
+	orders *application.Orders
+	log    *slog.Logger
 }
 
 // mountOperatorAPI монтирует рабочее место оператора на роутер коробки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с ней не может.
-func mountOperatorAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
-	api := operatorAPI{menu: menu, log: log}
+func mountOperatorAPI(r chi.Router, menu *application.Menu, orders *application.Orders, log *slog.Logger) {
+	api := operatorAPI{menu: menu, orders: orders, log: log}
 
 	// Лимит тела вешается на рабочее место, а не на весь роутер: отказ отдаётся по схеме
 	// его спецификации, а у партнёрского контракта схема своя. Он стоит перед
@@ -57,7 +58,7 @@ func mountOperatorAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
 			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
 			// `limit`. Спецификация обещает на них `problem+json`, а не текст по умолчанию.
 			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
+				writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
 					"Некорректные параметры запроса", err.Error())
 			},
 		})
@@ -70,7 +71,7 @@ func (a operatorAPI) ListMenuItems(
 ) {
 	paging, err := httpx.ResolvePaging(params.Limit, params.Offset, OperatorMenuPageDefault, OperatorMenuPageMax)
 	if err != nil {
-		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
 			"Некорректные параметры запроса", err.Error())
 
 		return
@@ -293,27 +294,37 @@ func decodeBody(r *http.Request, body any, required ...string) error {
 // а только свой сценарий.
 func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	var (
-		invalid domain.InvalidMenuItemError
-		bad     badRequestError
+		invalidItem  domain.InvalidMenuItemError
+		invalidOrder domain.InvalidOrderError
+		bad          badRequestError
 	)
 
 	switch {
 	case errors.Is(err, domain.ErrMenuItemNotFound):
-		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.MenuItemNotFound,
+		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.ProblemCodeMenuItemNotFound,
 			"Позиция не найдена", "позиции с таким идентификатором в меню нет")
+	case errors.Is(err, domain.ErrOrderNotFound):
+		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.ProblemCodeOrderNotFound,
+			"Заказ не найден", "заказа с таким идентификатором в коробке нет")
+	case errors.Is(err, domain.ErrOrderNotUnderReview):
+		writeOperatorProblem(w, r, http.StatusConflict, operator_v1.ProblemCodeOrderNotUnderReview,
+			"Заказ уже не на рассмотрении", "решение по этому заказу принято раньше")
 	case errors.As(err, &bad):
-		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
 			"Некорректный запрос", bad.reason)
-	case errors.As(err, &invalid):
-		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
-			"Некорректный запрос", invalid.Reason)
+	case errors.As(err, &invalidItem):
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
+			"Некорректный запрос", invalidItem.Reason)
+	case errors.As(err, &invalidOrder):
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ProblemCodeValidationFailed,
+			"Некорректный запрос", invalidOrder.Reason)
 	default:
 		// Причина уходит в лог, а не оператору: наружу она рассказала бы об устройстве
 		// службы, а выбрать по ней ветку поведения оператор всё равно не может — ему
 		// остаётся повторить запрос позже.
 		a.log.ErrorContext(r.Context(), "operator request failed", slog.Any("error", err))
 
-		writeOperatorProblem(w, r, http.StatusInternalServerError, operator_v1.InternalError,
+		writeOperatorProblem(w, r, http.StatusInternalServerError, operator_v1.ProblemCodeInternalError,
 			"Внутренняя ошибка коробки", "повторите запрос позже")
 	}
 }
@@ -343,9 +354,9 @@ func operatorProblemBody(
 var operatorProblems = problem.Writer[operator_v1.ProblemBase, operator_v1.ProblemCode]{
 	Body: operatorProblemBody,
 	Codes: problem.Codes[operator_v1.ProblemCode]{
-		ValidationFailed: operator_v1.ValidationFailed,
-		NotImplemented:   operator_v1.NotImplemented,
-		InternalError:    operator_v1.InternalError,
+		ValidationFailed: operator_v1.ProblemCodeValidationFailed,
+		NotImplemented:   operator_v1.ProblemCodeNotImplemented,
+		InternalError:    operator_v1.ProblemCodeInternalError,
 	},
 	MaxRequestBytes: maxRequestBodyBytes,
 	FailureTitle:    "Внутренняя ошибка коробки",

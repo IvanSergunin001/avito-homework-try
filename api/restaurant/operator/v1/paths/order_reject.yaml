@@ -1,0 +1,33 @@
+post:
+  operationId: rejectOrder
+  summary: Отклонить заказ на этапе рассмотрения
+  description: |
+    Заведение не берётся за заказ и объясняет причину — её площадка показывает
+    покупателю. Отклонить можно только заказ на рассмотрении: после подтверждения заказ
+    уже в работе, и отменяют его иначе.
+
+    Остатки, списанные при приёме заказа, возвращаются в меню: продукты на отклонённый
+    заказ не потрачены, и позиция снова продаётся.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters.yaml#/OrderId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/Rejection'
+  responses:
+    '200':
+      description: Заказ отклонён.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../components/responses.yaml#/OrderNotFound'
+    '409':
+      $ref: '../components/responses.yaml#/Conflict'

@@ -25,6 +25,7 @@ import (
 	// он существует ровно затем, чтобы проверить обе стороны опубликованного контракта
 	// вместе, и без второй стороны его не написать (см. комментарий к файлу).
 	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http" //nolint:depguard // интеграционный тест поднимает обе стороны контракта намеренно
+	boxdomain "github.com/IvanSergunin001/Test157/internal/restaurant/domain"             //nolint:depguard // интеграционный тест поднимает обе стороны контракта намеренно
 )
 
 // operatorBox — настоящая коробка заведения, поднятая рядом с площадкой: меню в ней ведёт
@@ -39,7 +40,9 @@ type operatorBox struct {
 func (p *platform) openBox(t *testing.T) *operatorBox {
 	t.Helper()
 
-	srv := httptest.NewServer(restauranthttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), p.db.DB))
+	// Часы работы коробке здесь безразличны: тест забирает у неё меню, а не заказывает.
+	srv := httptest.NewServer(restauranthttp.NewRouter(
+		logger.New(io.Discard, slog.LevelInfo), p.db.DB, boxdomain.AllDay()))
 	t.Cleanup(srv.Close)
 
 	return &operatorBox{srv: srv}

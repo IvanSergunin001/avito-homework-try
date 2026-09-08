@@ -22,3 +22,12 @@ MenuItemId:
   schema:
     type: string
     format: uuid
+
+OrderId:
+  name: orderId
+  in: path
+  required: true
+  description: Идентификатор заказа в коробке заведения.
+  schema:
+    type: string
+    format: uuid

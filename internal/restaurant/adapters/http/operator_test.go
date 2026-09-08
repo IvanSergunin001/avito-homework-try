@@ -317,7 +317,7 @@ func TestBodyThatIsNotJSONIsRefusedAsInvalidRequest(t *testing.T) {
 
 	b := newBox(t)
 
-	document := asRefusal(t, b.do(t, http.MethodPost, operatorMenu, []byte("не json")), http.StatusBadRequest)
+	document := asRefusal(t, b.do(t, http.MethodPost, operatorMenu, []byte("не json"), nil), http.StatusBadRequest)
 
 	if document.Code != "validation_failed" {
 		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)

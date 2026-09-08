@@ -81,6 +81,7 @@ const (
 	NotImplemented        ProblemCode = "not_implemented"
 	OrderNotCancellable   ProblemCode = "order_not_cancellable"
 	OrderNotFound         ProblemCode = "order_not_found"
+	OrderNotUnderReview   ProblemCode = "order_not_under_review"
 	OutOfStock            ProblemCode = "out_of_stock"
 	PriceChanged          ProblemCode = "price_changed"
 	ProductNotFound       ProblemCode = "product_not_found"
@@ -108,6 +109,8 @@ func (e ProblemCode) Valid() bool {
 	case OrderNotCancellable:
 		return true
 	case OrderNotFound:
+		return true
+	case OrderNotUnderReview:
 		return true
 	case OutOfStock:
 		return true
