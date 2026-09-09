@@ -69,10 +69,54 @@ func TestDemoRestaurantIsConnectedRightAfterStartAndItsKeyIsStoredHashed(t *test
 	}
 }
 
+// Синхронизация каталога пишет демо-заведению меню, а меню держит заведение: удалить
+// заведение, у которого есть позиции, база не даёт — внешний ключ товара запрещающий.
+// Поэтому откат сида проверяется не на чистой базе, а после того, как каталог хоть раз
+// синхронизировался: до этого слайса откатывать было нечего, а с него — есть что, и
+// сломанный откат нашёл бы не тест, а человек, сворачивающий демонстрацию.
+func TestDemoRestaurantRollsBackAfterTheCatalogHasBeenSynced(t *testing.T) {
+	t.Parallel()
+
+	db := testdb.New(t)
+	applySeed(t, db)
+
+	// Позиция меню — то, что оставляет после себя синхронизация каталога: сид её не
+	// заводит, поэтому и кладём её сюда сами, а не ждём от сида.
+	if _, err := db.ExecContext(t.Context(), `
+		INSERT INTO platform.products (id, restaurant_id, external_id, name, price)
+		SELECT $1, id, $2, $3, $4 FROM platform.restaurants`,
+		"018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a93", "baget", "Багет", 12000); err != nil {
+		t.Fatalf("положить позицию меню демо-заведению: %v", err)
+	}
+
+	if _, err := seedProvider(t, db).Down(t.Context()); err != nil {
+		t.Fatalf("откатить демонстрационные данные: %v", err)
+	}
+
+	var restaurants int
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM platform.restaurants`).Scan(&restaurants); err != nil {
+		t.Fatalf("пересчитать заведения: %v", err)
+	}
+	if restaurants != 0 {
+		t.Errorf("после отката осталось заведений: %d, ожидали 0", restaurants)
+	}
+}
+
 // applySeed накатывает демонстрационные данные тем же инструментом и с тем же журналом,
 // какими их накатывает шаг запуска: тест не воспроизводит их руками, иначе он проверял бы
 // не то, что доедет до запущенной системы.
 func applySeed(t *testing.T, db *testdb.DB) {
+	t.Helper()
+
+	if _, err := seedProvider(t, db).Up(t.Context()); err != nil {
+		t.Fatalf("накатить демонстрационные данные: %v", err)
+	}
+}
+
+// seedProvider собирает goose поверх набора демонстрационных данных — тот же набор и тот
+// же журнал, что у шага запуска.
+func seedProvider(t *testing.T, db *testdb.DB) *goose.Provider {
 	t.Helper()
 
 	files, err := fs.Sub(migrations.SeedFS, migrations.SeedDir)
@@ -85,7 +129,6 @@ func applySeed(t *testing.T, db *testdb.DB) {
 	if err != nil {
 		t.Fatalf("подготовить демонстрационные данные: %v", err)
 	}
-	if _, err := provider.Up(t.Context()); err != nil {
-		t.Fatalf("накатить демонстрационные данные: %v", err)
-	}
+
+	return provider
 }
