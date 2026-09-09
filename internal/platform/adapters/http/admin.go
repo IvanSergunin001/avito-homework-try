@@ -3,14 +3,13 @@ package http
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
-	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx/problem"
 	"github.com/IvanSergunin001/Test157/internal/platform/adapters/http/admin_v1"
 	"github.com/IvanSergunin001/Test157/internal/platform/application"
 	"github.com/IvanSergunin001/Test157/internal/platform/domain"
@@ -43,8 +42,8 @@ func mountAdminAPI(r chi.Router, onboarding *application.Onboarding, log *slog.L
 	api := adminAPI{onboarding: onboarding, log: log}
 
 	handler := admin_v1.NewStrictHandlerWithOptions(api, nil, admin_v1.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc:  writeAdminRequestProblem,
-		ResponseErrorHandlerFunc: api.writeAdminResponseProblem,
+		RequestErrorHandlerFunc:  adminProblems.BadRequest,
+		ResponseErrorHandlerFunc: api.writeAdminFailure,
 	})
 
 	// Лимит тела вешается на админское API, а не на весь роутер: отказ отдаётся по схеме
@@ -52,7 +51,7 @@ func mountAdminAPI(r chi.Router, onboarding *application.Onboarding, log *slog.L
 	// перед сгенерированными маршрутами, потому что размер тела — это то, что проверяется
 	// раньше всего остального: разбор параметров и тела уже читает запрос.
 	r.Group(func(r chi.Router) {
-		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, refuseOversizedAdminBody))
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, adminProblems.Oversized))
 
 		admin_v1.HandlerWithOptions(handler, admin_v1.ChiServerOptions{
 			BaseURL:    AdminAPIPrefix,
@@ -60,7 +59,7 @@ func mountAdminAPI(r chi.Router, onboarding *application.Onboarding, log *slog.L
 			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, отсутствие
 			// обязательного заголовка. Контракт обещает на них `problem+json`, а не текст
 			// по умолчанию.
-			ErrorHandlerFunc: writeAdminRequestProblem,
+			ErrorHandlerFunc: adminProblems.BadRequest,
 		})
 	})
 }
@@ -80,7 +79,7 @@ func (a adminAPI) RegisterRestaurant(
 	case errors.As(err, &invalid):
 		return admin_v1.RegisterRestaurant400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: admin_v1.
-				BadRequestApplicationProblemPlusJSONResponse(adminProblem(
+				BadRequestApplicationProblemPlusJSONResponse(adminProblemBody(
 					http.StatusBadRequest, admin_v1.ValidationFailed,
 					"Некорректный запрос", invalid.Reason)),
 		}, nil
@@ -118,14 +117,14 @@ func (a adminAPI) UpdateRestaurant(
 	case errors.Is(err, domain.ErrRestaurantNotFound):
 		return admin_v1.UpdateRestaurant404ApplicationProblemPlusJSONResponse{
 			NotFoundApplicationProblemPlusJSONResponse: admin_v1.
-				NotFoundApplicationProblemPlusJSONResponse(adminProblem(
+				NotFoundApplicationProblemPlusJSONResponse(adminProblemBody(
 					http.StatusNotFound, admin_v1.RestaurantNotFound, "Заведение не найдено",
 					"заведения с таким идентификатором на площадке нет")),
 		}, nil
 	case errors.As(err, &invalid):
 		return admin_v1.UpdateRestaurant400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: admin_v1.
-				BadRequestApplicationProblemPlusJSONResponse(adminProblem(
+				BadRequestApplicationProblemPlusJSONResponse(adminProblemBody(
 					http.StatusBadRequest, admin_v1.ValidationFailed,
 					"Некорректный запрос", invalid.Reason)),
 		}, nil
@@ -151,10 +150,10 @@ func (adminAPI) CancelOrderBySupport(
 	return nil, httpx.ErrNotImplemented
 }
 
-// adminProblem собирает отказ админского API. Тело — общая основа `problem+json`: своих
-// полей у этих отказов нет, а тип сгенерирован по спецификации, поэтому ответ не может
-// разойтись с контрактом.
-func adminProblem(
+// adminProblemBody собирает тело отказа админского API — общую основу `problem+json`.
+// Своих полей у этих отказов нет, а тип сгенерирован по спецификации, поэтому ответ не
+// может разойтись с контрактом.
+func adminProblemBody(
 	status int, code admin_v1.ProblemCode, title, detail string,
 ) admin_v1.ProblemBase {
 	return admin_v1.ProblemBase{
@@ -166,43 +165,24 @@ func adminProblem(
 	}
 }
 
-// writeAdminRequestProblem отвечает на неразобранный запрос — неверный uuid в пути,
-// отсутствующий заголовок, неразбираемое тело.
-func writeAdminRequestProblem(w http.ResponseWriter, r *http.Request, err error) {
-	problem.Write(r.Context(), w, http.StatusBadRequest, adminProblem(
-		http.StatusBadRequest, admin_v1.ValidationFailed,
-		"Некорректные параметры запроса", err.Error()))
+// adminProblems — отказы админского API. Форма у них та же, что у остальных четырёх
+// поверхностей проекта, поэтому она живёт одна на всех (problem.Writer), а здесь названо
+// только то, чем админское API от них отличается: сгенерированные типы, коды и тексты.
+var adminProblems = problem.Writer[admin_v1.ProblemBase, admin_v1.ProblemCode]{
+	Body: adminProblemBody,
+	Codes: problem.Codes[admin_v1.ProblemCode]{
+		ValidationFailed: admin_v1.ValidationFailed,
+		NotImplemented:   admin_v1.NotImplemented,
+		InternalError:    admin_v1.InternalError,
+	},
+	MaxRequestBytes: maxRequestBodyBytes,
+	FailureTitle:    "Внутренняя ошибка площадки",
+	Surface:         "admin",
 }
 
-// refuseOversizedAdminBody отвечает на запрос, тело которого больше допустимого.
-//
-// Код причины — `validation_failed`: запрос не прошёл проверку, и другого кода на это в
-// закрытом перечне спецификации нет.
-func refuseOversizedAdminBody(w http.ResponseWriter, r *http.Request) {
-	problem.Write(r.Context(), w, http.StatusRequestEntityTooLarge, adminProblem(
-		http.StatusRequestEntityTooLarge, admin_v1.ValidationFailed,
-		"Слишком большое тело запроса",
-		fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes)))
-}
-
-// writeAdminResponseProblem отвечает, когда обработчик вернул ошибку. Операция, описанная
-// контрактом, но ещё не реализованная, — это `501`; всё остальное `500`.
-//
-// Причина отказа по вине площадки уходит в лог, а не администратору: наружу она
-// рассказала бы об устройстве службы, а выбрать по ней ветку поведения нельзя — остаётся
-// повторить запрос позже.
-func (a adminAPI) writeAdminResponseProblem(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, httpx.ErrNotImplemented) {
-		problem.Write(r.Context(), w, http.StatusNotImplemented, adminProblem(
-			http.StatusNotImplemented, admin_v1.NotImplemented,
-			"Операция ещё не реализована", err.Error()))
-
-		return
-	}
-
-	a.log.ErrorContext(r.Context(), "admin request failed", slog.Any("error", err))
-
-	problem.Write(r.Context(), w, http.StatusInternalServerError, adminProblem(
-		http.StatusInternalServerError, admin_v1.InternalError,
-		"Внутренняя ошибка площадки", "повторите запрос позже"))
+// writeAdminFailure отвечает, когда обработчик вернул ошибку: `501` на операцию,
+// описанную контрактом, но ещё не реализованную, и `500` на всё остальное. Форма отказа
+// общая, а логгер у каждого адаптера свой — за ним метод и заводится.
+func (a adminAPI) writeAdminFailure(w http.ResponseWriter, r *http.Request, err error) {
+	adminProblems.Failure(a.log, w, r, err)
 }

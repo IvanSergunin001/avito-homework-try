@@ -18,7 +18,16 @@ import (
 // Он известен всем и годится только для демонстрации.
 const demoPartnerKey = "pk_DEMOKEYDEMOKEYDEMOKEYDEMOK"
 
-func TestDemoRestaurantIsConnectedRightAfterStartAndAnswersByItsKey(t *testing.T) {
+// demoRestaurantID — идентификатор демо-заведения, объявленный самой seed-миграцией.
+// Ряд выбирается по нему, а не по хешу ключа: выбор по хешу делал бы проверку хранения
+// ключа мёртвой — найденный ряд по построению равен искомому хешу и открытым ключом не
+// бывает никогда.
+const demoRestaurantID = "018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01"
+
+// Имя теста называет ровно то, что он проверяет: что демо-заведение легло в базу и что
+// его ключ лежит там хешем. «Отвечает по своему ключу» проверяется не здесь — до роутера
+// этот пакет не дотягивается, а швом площадки демо-данные намеренно не накатываются.
+func TestDemoRestaurantIsConnectedRightAfterStartAndItsKeyIsStoredHashed(t *testing.T) {
 	t.Parallel()
 
 	db := testdb.New(t)
@@ -33,15 +42,18 @@ func TestDemoRestaurantIsConnectedRightAfterStartAndAnswersByItsKey(t *testing.T
 	row := db.QueryRowContext(t.Context(), `
 		SELECT name, base_url, api_key_hash, is_active
 		FROM platform.restaurants
-		WHERE api_key_hash = $1`, domain.HashPartnerKey(demoPartnerKey))
+		WHERE id = $1`, demoRestaurantID)
 	if err := row.Scan(&name, &baseURL, &keyHash, &isActive); err != nil {
 		t.Fatalf("демо-заведение не подключилось seed-миграцией: %v", err)
 	}
 
 	// Ключ в базе лежит хешем, как у всякого заведения: демонстрационное отличается тем,
 	// что его ключ напечатан в документации, а не тем, что для него сделано исключение.
-	if keyHash == demoPartnerKey {
-		t.Error("ключ демо-заведения лежит в базе открытым")
+	// Сверяется он с хешем напечатанного ключа, а не «не равен открытому»: связь между
+	// тем, что напечатано в README, и тем, что лежит в базе, — это и есть проверяемое.
+	if want := domain.HashPartnerKey(demoPartnerKey); keyHash != want {
+		t.Errorf("в базе %q, ожидали хеш напечатанного ключа %q: по нему площадка опознаёт демо-заведение",
+			keyHash, want)
 	}
 	if !isActive {
 		t.Error("демо-заведение выключено, а заводится оно затем, чтобы система работала сразу после запуска")

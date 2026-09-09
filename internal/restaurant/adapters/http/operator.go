@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
-	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx/problem"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http/operator_v1"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/application"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/domain"
@@ -50,7 +49,7 @@ func mountOperatorAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
 	// сгенерированными маршрутами, потому что размер тела — это то, что проверяется
 	// раньше всего остального: разбор параметров и тела уже читает запрос.
 	r.Group(func(r chi.Router) {
-		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, api.refuseOversizedBody))
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, operatorProblems.Oversized))
 
 		operator_v1.HandlerWithOptions(api, operator_v1.ChiServerOptions{
 			BaseURL:    OperatorAPIPrefix,
@@ -319,28 +318,43 @@ func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// refuseOversizedBody отвечает на запрос, тело которого больше допустимого.
-//
-// Код причины — `validation_failed`: запрос не прошёл проверку, и другого кода на это в
-// закрытом перечне спецификации нет. Заводить новый код ради размера тела незачем —
-// ветка поведения у клиента та же самая, что и при любом непринятом запросе.
-func (a operatorAPI) refuseOversizedBody(w http.ResponseWriter, r *http.Request) {
-	writeOperatorProblem(w, r, http.StatusRequestEntityTooLarge, operator_v1.ValidationFailed,
-		"Слишком большое тело запроса",
-		fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes))
-}
-
-// writeOperatorProblem отвечает отказом рабочего места. Тело — общая основа
-// `problem+json`: своих полей у этих отказов нет, а тип сгенерирован по спецификации,
-// поэтому ответ не может разойтись с обещанным.
-func writeOperatorProblem(
-	w http.ResponseWriter, r *http.Request, status int, code operator_v1.ProblemCode, title, detail string,
-) {
-	problem.Write(r.Context(), w, status, operator_v1.ProblemBase{
+// operatorProblemBody собирает тело отказа рабочего места — общую основу `problem+json`.
+// Своих полей у этих отказов нет, а тип сгенерирован по спецификации, поэтому ответ не
+// может разойтись с обещанным.
+func operatorProblemBody(
+	status int, code operator_v1.ProblemCode, title, detail string,
+) operator_v1.ProblemBase {
+	return operator_v1.ProblemBase{
 		Type:   problem.DefaultType,
 		Title:  title,
 		Status: status,
 		Detail: &detail,
 		Code:   code,
-	})
+	}
+}
+
+// operatorProblems — отказы рабочего места оператора. Форма у них та же, что у остальных
+// четырёх поверхностей проекта, поэтому она живёт одна на всех (problem.Writer), а здесь
+// названо только то, чем рабочее место от них отличается: сгенерированные типы, коды и
+// тексты.
+//
+// `NotImplemented` в перечне заполнен, хотя нереализованных операций у рабочего места
+// нет: оставить поле пустым значило бы отдать на неожиданной ошибке отказ с пустым кодом.
+var operatorProblems = problem.Writer[operator_v1.ProblemBase, operator_v1.ProblemCode]{
+	Body: operatorProblemBody,
+	Codes: problem.Codes[operator_v1.ProblemCode]{
+		ValidationFailed: operator_v1.ValidationFailed,
+		NotImplemented:   operator_v1.NotImplemented,
+		InternalError:    operator_v1.InternalError,
+	},
+	MaxRequestBytes: maxRequestBodyBytes,
+	FailureTitle:    "Внутренняя ошибка коробки",
+	Surface:         "operator",
+}
+
+// writeOperatorProblem отвечает отказом рабочего места.
+func writeOperatorProblem(
+	w http.ResponseWriter, r *http.Request, status int, code operator_v1.ProblemCode, title, detail string,
+) {
+	operatorProblems.Write(w, r, status, code, title, detail)
 }

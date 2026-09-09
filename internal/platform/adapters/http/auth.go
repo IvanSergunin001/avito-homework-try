@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/IvanSergunin001/Test157/internal/platform/application"
+	"github.com/IvanSergunin001/Test157/internal/platform/domain"
 )
 
 const (
@@ -57,10 +59,7 @@ func (g guard) requirePartner() func(http.Handler) http.Handler {
 				return
 			}
 
-			// Кто именно позвонил, здесь не запоминается: операциям партнёрского API
-			// на этом этапе достаточно того, что звонящий опознан, а тем, которым
-			// понадобится само заведение, оно приедет своим этапом.
-			_, err := g.gate.IdentifyPartner(r.Context(), key)
+			partner, err := g.gate.IdentifyPartner(r.Context(), key)
 
 			switch {
 			case errors.Is(err, application.ErrUnknownKey):
@@ -72,14 +71,40 @@ func (g guard) requirePartner() func(http.Handler) http.Handler {
 
 				return
 			case err != nil:
-				writePartnerFailure(g.log, w, r, err)
+				partnerProblems.Failure(g.log, w, r, err)
 
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			// Опознанное заведение кладётся в контекст запроса: обработчику оно нужно
+			// целиком (`GET /integration` отвечает реквизитами звонящего), а искать его
+			// второй раз по тому же ключу значило бы сходить в базу дважды за один
+			// запрос и допустить, что два похода нашли разное.
+			next.ServeHTTP(w, r.WithContext(withPartner(r.Context(), partner)))
 		})
 	}
+}
+
+// partnerContextKey — ключ, под которым опознанное заведение лежит в контексте запроса.
+// Свой неэкспортируемый тип, а не строка: чужой пакет не может ни прочитать значение
+// случайно, ни затереть его своим.
+type partnerContextKey struct{}
+
+// withPartner кладёт опознанное заведение в контекст запроса.
+func withPartner(ctx context.Context, partner domain.Partner) context.Context {
+	return context.WithValue(ctx, partnerContextKey{}, partner)
+}
+
+// partnerFromContext достаёт заведение, опознанное проверкой ключа.
+//
+// Второе значение — не «вдруг не найдётся»: до обработчиков партнёрского API запрос
+// доходит только через requirePartner, и его отсутствие означало бы, что маршрут
+// смонтировали мимо проверки ключа. Обработчик отвечает на это отказом по вине площадки,
+// а не пустым заведением, — молча отдать чужому реквизиты хуже, чем ответить `500`.
+func partnerFromContext(ctx context.Context) (domain.Partner, bool) {
+	partner, ok := ctx.Value(partnerContextKey{}).(domain.Partner)
+
+	return partner, ok
 }
 
 // bearerToken достаёт ключ из значения заголовка авторизации.

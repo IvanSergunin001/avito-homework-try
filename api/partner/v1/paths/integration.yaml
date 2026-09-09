@@ -1,0 +1,34 @@
+get:
+  operationId: getIntegration
+  summary: Как площадка видит подключение заведения (предоставляет площадка)
+  description: |
+    Заведение смотрит, по каким адресам площадка будет к нему ходить.
+
+    Адрес интеграции заведение сообщает площадке при онбординге, а пути контракта площадка
+    приписывает к нему сама. Склейка не всегда даёт то, чего заведение ожидало: адрес
+    может быть с портом, с префиксом пути или с параметром запроса, и увидеть результат
+    заведению негде — до этой ручки первым сообщением о неверном адресе был неотвеченный
+    запрос в момент первого заказа.
+
+    Отвечает площадка тому заведению, чьим ключом её спросили: чужих реквизитов здесь не
+    видно.
+  tags:
+    - platform
+  servers:
+    - url: https://kitchen.avito.ru/api/kitchen/v1/partner
+      description: Площадка
+    - url: http://localhost:8080/api/kitchen/v1/partner
+      description: Локальный запуск через Compose
+  security:
+    - partnerKey: []
+  responses:
+    '200':
+      description: Адрес интеграции и адреса всех операций контракта.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Integration'
+    '401':
+      $ref: '../../../common/v1/components/responses.yaml#/Unauthorized'
+    '403':
+      $ref: '../../../common/v1/components/responses.yaml#/Forbidden'

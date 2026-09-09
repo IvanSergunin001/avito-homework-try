@@ -1,6 +1,52 @@
 # Схемы партнёрского контракта — обе стороны интеграции в одном документе. Общие с
 # другими API схемы подключаются из `api/common/v1`.
 
+Integration:
+  type: object
+  description: |
+    Как площадка видит подключение заведения: адрес, который заведение сообщило при
+    онбординге, и адреса всех операций контракта, по которым площадка будет к нему ходить.
+  required:
+    - base_url
+    - endpoints
+  properties:
+    base_url:
+      type: string
+      format: uri
+      description: |
+        Адрес интеграции, как его хранит площадка. Может отличаться от присланного при
+        онбординге: завершающий слэш пути снимается, чтобы один и тот же адрес не давал
+        двух разных путей к одному заведению.
+      example: https://baton.example.org
+    endpoints:
+      type: array
+      description: Адреса операций контракта — все, по которым площадка обращается к заведению.
+      items:
+        $ref: '#/IntegrationEndpoint'
+
+IntegrationEndpoint:
+  type: object
+  description: Адрес одной операции контракта у этого заведения.
+  required:
+    - operation
+    - method
+    - url
+  properties:
+    operation:
+      type: string
+      description: '`operationId` операции в этом документе.'
+      example: listMenu
+    method:
+      type: string
+      description: Метод запроса.
+      example: GET
+    url:
+      type: string
+      description: |
+        Полный адрес операции. Сегмент в фигурных скобках — имя параметра пути, а не его
+        значение: площадка подставляет туда идентификатор в момент запроса.
+      example: https://baton.example.org/api/kitchen/v1/restaurant/menu
+
 CancellationRequest:
   type: object
   description: Просьба площадки отменить принятый заказ.

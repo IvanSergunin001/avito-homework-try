@@ -136,6 +136,41 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
+// Integration Как площадка видит подключение заведения: адрес, который заведение сообщило при
+// онбординге, и адреса всех операций контракта, по которым площадка будет к нему ходить.
+type Integration struct {
+	// BaseUrl Адрес интеграции, как его хранит площадка. Может отличаться от присланного при
+	// онбординге: завершающий слэш пути снимается, чтобы один и тот же адрес не давал
+	// двух разных путей к одному заведению.
+	//
+	//
+	// Example: https://baton.example.org
+	BaseUrl string `json:"base_url"`
+
+	// Endpoints Адреса операций контракта — все, по которым площадка обращается к заведению.
+	Endpoints []IntegrationEndpoint `json:"endpoints"`
+}
+
+// IntegrationEndpoint Адрес одной операции контракта у этого заведения.
+type IntegrationEndpoint struct {
+	// Method Метод запроса.
+	//
+	// Example: GET
+	Method string `json:"method"`
+
+	// Operation `operationId` операции в этом документе.
+	//
+	// Example: listMenu
+	Operation string `json:"operation"`
+
+	// Url Полный адрес операции. Сегмент в фигурных скобках — имя параметра пути, а не его
+	// значение: площадка подставляет туда идентификатор в момент запроса.
+	//
+	//
+	// Example: https://baton.example.org/api/kitchen/v1/restaurant/menu
+	Url string `json:"url"`
+}
+
 // NotifiedStatus Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
 // перечень не входят: их ставит сама площадка — при создании заказа и по успешному
 // синхронному ответу на приём заказа.
@@ -259,6 +294,9 @@ type ServerInterface interface {
 	// RefreshCatalog Обновить каталог внеочередно (предоставляет площадка)
 	// (POST /catalog/refresh)
 	RefreshCatalog(w http.ResponseWriter, r *http.Request)
+	// GetIntegration Как площадка видит подключение заведения (предоставляет площадка)
+	// (GET /integration)
+	GetIntegration(w http.ResponseWriter, r *http.Request)
 	// NotifyOrderStatus Уведомить о смене статуса заказа (предоставляет площадка)
 	// (POST /orders/{orderId}/status)
 	NotifyOrderStatus(w http.ResponseWriter, r *http.Request, orderId OrderId)
@@ -271,6 +309,12 @@ type Unimplemented struct{}
 // RefreshCatalog Обновить каталог внеочередно (предоставляет площадка)
 // (POST /catalog/refresh)
 func (_ Unimplemented) RefreshCatalog(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetIntegration Как площадка видит подключение заведения (предоставляет площадка)
+// (GET /integration)
+func (_ Unimplemented) GetIntegration(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -294,6 +338,20 @@ func (siw *ServerInterfaceWrapper) RefreshCatalog(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RefreshCatalog(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetIntegration operation middleware
+func (siw *ServerInterfaceWrapper) GetIntegration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetIntegration(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -446,6 +504,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/catalog/refresh", wrapper.RefreshCatalog)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/integration", wrapper.GetIntegration)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/orders/{orderId}/status", wrapper.NotifyOrderStatus)
 	})
 
@@ -496,6 +557,59 @@ type RefreshCatalog403ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response RefreshCatalog403ApplicationProblemPlusJSONResponse) VisitRefreshCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIntegrationRequestObject struct {
+}
+
+type GetIntegrationResponseObject interface {
+	VisitGetIntegrationResponse(w http.ResponseWriter) error
+}
+
+type GetIntegration200JSONResponse Integration
+
+func (response GetIntegration200JSONResponse) VisitGetIntegrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIntegration401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetIntegration401ApplicationProblemPlusJSONResponse) VisitGetIntegrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIntegration403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetIntegration403ApplicationProblemPlusJSONResponse) VisitGetIntegrationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -599,6 +713,9 @@ type StrictServerInterface interface {
 	// RefreshCatalog Обновить каталог внеочередно (предоставляет площадка)
 	// (POST /catalog/refresh)
 	RefreshCatalog(ctx context.Context, request RefreshCatalogRequestObject) (RefreshCatalogResponseObject, error)
+	// GetIntegration Как площадка видит подключение заведения (предоставляет площадка)
+	// (GET /integration)
+	GetIntegration(ctx context.Context, request GetIntegrationRequestObject) (GetIntegrationResponseObject, error)
 	// NotifyOrderStatus Уведомить о смене статуса заказа (предоставляет площадка)
 	// (POST /orders/{orderId}/status)
 	NotifyOrderStatus(ctx context.Context, request NotifyOrderStatusRequestObject) (NotifyOrderStatusResponseObject, error)
@@ -660,6 +777,30 @@ func (sh *strictHandler) RefreshCatalog(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RefreshCatalogResponseObject); ok {
 		if err := validResponse.VisitRefreshCatalogResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetIntegration operation middleware
+func (sh *strictHandler) GetIntegration(w http.ResponseWriter, r *http.Request) {
+	var request GetIntegrationRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetIntegration(ctx, request.(GetIntegrationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetIntegration")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetIntegrationResponseObject); ok {
+		if err := validResponse.VisitGetIntegrationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
