@@ -1,11 +1,12 @@
 # Всё, кроме `docker compose`, выполняется внутри контейнеров: локально установленный
 # Go не нужен ни для сборки, ни для линтера, ни для тестов (см. Dockerfile).
 
+API_OUT    ?= .api-artifacts
 TEST_IMAGE ?= avito-kitchen-test
 TEST_ARGS  ?= ./...
 DOCKER_SOCK := /var/run/docker.sock
 
-.PHONY: help up down logs clean-data build lint test
+.PHONY: help up down logs clean-data api api-check build lint test
 
 help: ## Список команд
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -25,6 +26,25 @@ clean-data: ## Погасить всё и удалить локальные да
 
 logs: ## Логи запущенных служб
 	docker compose logs --follow
+
+# Каталог хоста в сборку не примонтировать (демон Docker живёт снаружи), поэтому
+# результат генерации выгружается из образа-артефакта. Выгрузка идёт во временный
+# каталог, а не прямо в рабочее дерево: экспортёр обходит каталог назначения целиком и
+# спотыкается о `./.data`, который Docker создал от root.
+api: ## Собрать спецификации в bundle.yaml и сгенерировать по ним код
+	rm -rf $(API_OUT)
+	docker build --target api-artifacts --output type=local,dest=$(API_OUT) .
+	cp -a $(API_OUT)/api/. api/
+	cp -a $(API_OUT)/internal/. internal/
+	rm -rf $(API_OUT)
+
+api-check: api ## Проверить, что генерация воспроизводится: повторный прогон без диффа
+	@test -z "$$(git status --porcelain -- api internal)" || { \
+		git status --short -- api internal; \
+		echo "Сгенерированное разошлось с закоммиченным — закоммитьте результат make api."; \
+		exit 1; \
+	}
+	@echo "Генерация воспроизводится: диффа нет."
 
 build: ## Скомпилировать репозиторий и прогнать go vet
 	docker build --target vet .

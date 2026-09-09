@@ -1,0 +1,24 @@
+get:
+  operationId: listRestaurantProducts
+  summary: Меню заведения
+  description: |
+    Постраничное меню одного заведения. Параметр `q` сужает выдачу до товаров, чьё
+    название содержит подстроку, — так поиск можно ограничить одним заведением.
+  tags:
+    - catalog
+  parameters:
+    - $ref: '../components/parameters.yaml#/RestaurantId'
+    - $ref: '../components/parameters.yaml#/SearchQuery'
+    - $ref: '../components/parameters.yaml#/Limit'
+    - $ref: '../../../common/v1/components/parameters.yaml#/Offset'
+  responses:
+    '200':
+      description: Страница меню.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/ProductPage'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

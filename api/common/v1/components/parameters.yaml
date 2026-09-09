@@ -1,0 +1,50 @@
+# Параметры, общие для всех API: кто обращается, смещение страницы, заголовки
+# идемпотентности. Потолок страницы (`limit`) общим не стал — у витрины и у меню он разный,
+# и объявляет его каждый документ сам.
+
+IdempotencyAttempt:
+  name: Idempotency-Attempt
+  in: header
+  required: true
+  description: |
+    Номер попытки отправки, начиная с 1: он растёт на каждом повторе, чтобы принимающая
+    сторона отличала настоящий повтор от первой доставки. Стандарта на номер попытки нет
+    (стандартизован только `Idempotency-Key`), поэтому заголовок описан здесь как часть
+    контракта; префикс `X-` не используется — RFC 6648.
+  schema:
+    type: integer
+    minimum: 1
+  example: 1
+
+IdempotencyKey:
+  name: Idempotency-Key
+  in: header
+  required: true
+  description: |
+    Ключ идемпотентности отправки заказа — совпадает с `order_id` в теле. Повтор с тем же
+    ключом не создаёт второй заказ, а возвращает результат первого.
+  schema:
+    type: string
+    format: uuid
+
+Offset:
+  name: offset
+  in: query
+  required: false
+  description: Сколько записей пропустить от начала выдачи.
+  schema:
+    type: integer
+    minimum: 0
+    default: 0
+
+UserId:
+  name: User-Id
+  in: header
+  required: true
+  description: |
+    Идентификатор того, кто обращается: покупателя в клиентском API, сотрудника — в
+    админском. Не удостоверение, а самопровозглашённое значение, которому площадка верит по
+    условию задания (README, «Упрощения»). Префикс `X-` не используется — RFC 6648.
+  schema:
+    type: string
+    format: uuid

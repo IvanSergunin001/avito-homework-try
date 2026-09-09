@@ -1,0 +1,10 @@
+# Клиент партнёрского контракта: им площадка ходит в заведение, им же тесты шва коробки
+# проверяют её половину контракта. Берём операции заведения (тег `restaurant`).
+package: partner
+output: api/partner/v1/client.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  include-tags:
+    - restaurant

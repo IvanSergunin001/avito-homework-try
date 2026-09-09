@@ -1,0 +1,123 @@
+# Схемы, общие для всех API площадки: основа отказа и список его кодов, страница
+# выдачи, деньги, количество, инициатор отмены. Каждый документ подключает их `$ref`'ом
+# и добавляет своё поле через `allOf`, а не заводит вторую копию.
+
+CancelledBy:
+  type: string
+  description: |
+    Кто отменил заказ. Отмена заведением после начала готовки идёт через саппорт, поэтому
+    `support` — самостоятельное значение, а не разновидность `restaurant`.
+  enum:
+    - customer
+    - restaurant
+    - support
+  example: customer
+
+Money:
+  type: integer
+  format: int64
+  minimum: 0
+  description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
+  example: 45000
+
+PageMeta:
+  type: object
+  description: |
+    Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
+    которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
+  required:
+    - limit
+    - offset
+    - total
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      description: Сколько записей запрошено на страницу.
+      example: 20
+    offset:
+      type: integer
+      minimum: 0
+      description: Сколько записей пропущено от начала выдачи.
+      example: 0
+    total:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Сколько записей всего удовлетворяет запросу.
+      example: 42
+
+ProblemBase:
+  type: object
+  description: |
+    Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+    Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+    Своё поле API добавляет к этой основе через `allOf`.
+  required:
+    - type
+    - title
+    - status
+    - code
+  properties:
+    type:
+      type: string
+      format: uri-reference
+      default: about:blank
+      description: |
+        Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+        причины нет, идентичность несёт `code`.
+      example: about:blank
+    title:
+      type: string
+      description: Короткое человекочитаемое название проблемы.
+      example: Некорректный запрос
+    status:
+      type: integer
+      minimum: 100
+      maximum: 599
+      description: Код ответа HTTP, продублированный в теле.
+      example: 400
+    detail:
+      type: string
+      description: Пояснение для человека, привязанное к конкретному случаю.
+      example: 'limit: допустимы значения от 1 до 100'
+    instance:
+      type: string
+      format: uri-reference
+      nullable: true
+      description: |
+        Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+        когда по отказу нужно будет попадать в журнал или в обращение поддержки.
+    code:
+      $ref: '#/ProblemCode'
+
+ProblemCode:
+  type: string
+  description: |
+    Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+    разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+    список — API объявляет и те коды, которых сам не возвращает.
+  enum:
+    - validation_failed
+    - not_implemented
+    - internal_error
+    - unauthorized
+    - forbidden
+    - restaurant_not_found
+    - product_not_found
+    - order_not_found
+    - out_of_stock
+    - price_changed
+    - unknown_product
+    - restaurant_closed
+    - order_not_cancellable
+    - idempotency_key_reuse
+    - restaurant_unavailable
+  example: validation_failed
+
+Quantity:
+  type: integer
+  minimum: 1
+  maximum: 100
+  description: Количество единиц товара в позиции заказа.
+  example: 2

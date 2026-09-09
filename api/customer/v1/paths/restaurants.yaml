@@ -1,0 +1,20 @@
+get:
+  operationId: listRestaurants
+  summary: Список работающих заведений
+  description: |
+    Витрина покупателя: только активные заведения. Меню сюда не попадает — это коллекция
+    неограниченного размера со своей пагинацией, за ней отдельная ручка.
+  tags:
+    - catalog
+  parameters:
+    - $ref: '../components/parameters.yaml#/Limit'
+    - $ref: '../../../common/v1/components/parameters.yaml#/Offset'
+  responses:
+    '200':
+      description: Страница списка заведений.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/RestaurantPage'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'

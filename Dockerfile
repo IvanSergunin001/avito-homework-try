@@ -6,19 +6,64 @@
 
 ARG GO_VERSION=1.27
 ARG LINT_VERSION=v2.13.2
+ARG REDOCLY_VERSION=2.51.2
 
 # --- зависимости -------------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS deps
 WORKDIR /src
 # Отдельный слой: правка кода не приводит к повторной загрузке модулей. Кеш-монтирование
 # здесь не используется намеренно — модули должны остаться в слое, иначе образ для тестов
-# скачивал бы их заново на каждом прогоне.
+# скачивал бы их заново на каждом прогоне. Модуля два: службы и шов контрактов (`api`),
+# который вынесен отдельным модулем, чтобы его импортировали снаружи.
 COPY go.mod go.sum ./
-RUN go mod download
+COPY api/go.mod ./api/
+RUN go mod download && cd api && go mod download
 
 # --- исходники ---------------------------------------------------------------
 FROM deps AS source
 COPY . .
+
+# --- сборка спецификаций в один документ -------------------------------------
+# Источник каждой спецификации разбит на файлы через `$ref`; партнёру и кодогенератору
+# нужен самодостаточный документ, поэтому перед генерацией спецификации собираются
+# в `bundle.yaml`. Линт стоит перед сборкой: сломанный контракт не должен доехать
+# до генератора.
+FROM redocly/cli:${REDOCLY_VERSION} AS bundle
+WORKDIR /spec
+COPY api ./api
+RUN redocly lint \
+        api/customer/v1/openapi.yaml \
+        api/partner/v1/openapi.yaml \
+        api/admin/v1/openapi.yaml \
+ && redocly bundle api/customer/v1/openapi.yaml -o /out/api/customer/v1/bundle.yaml \
+ && redocly bundle api/partner/v1/openapi.yaml  -o /out/api/partner/v1/bundle.yaml \
+ && redocly bundle api/admin/v1/openapi.yaml    -o /out/api/admin/v1/bundle.yaml
+
+# --- генерация кода по спецификациям -----------------------------------------
+# Генерируем от собранных документов, а не от дерева ссылок: результат не зависит от
+# того, как кодогенератор разрешает внешние `$ref`. Версия генератора закреплена
+# директивой `tool` в go.mod, поэтому повторный прогон даёт тот же байт в байт код.
+# Конфиги лежат рядом со спеками, а пути в них — от корня репозитория: генерация всегда
+# запускается отсюда. Серверные интерфейсы уезжают к своим адаптерам в `internal`,
+# клиенты остаются в модуле `api`.
+FROM deps AS codegen
+COPY api ./api
+COPY --from=bundle /out/api ./api
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go tool oapi-codegen -config api/customer/v1/codegen-server.yaml            api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/customer/v1/codegen-client.yaml            api/customer/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-server-platform.yaml    api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-server-restaurant.yaml  api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/partner/v1/codegen-client.yaml             api/partner/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/admin/v1/codegen-server.yaml               api/admin/v1/bundle.yaml \
+ && cd api && go mod tidy
+
+# --- артефакты генерации ------------------------------------------------------
+# Пустой образ с одними результатами: `make api` выгружает его прямо в рабочее дерево
+# (`docker build --output`), потому что каталог хоста в сборку не примонтировать.
+FROM scratch AS api-artifacts
+COPY --from=codegen /src/api /api
+COPY --from=codegen /src/internal /internal
 
 # --- сборка службы -----------------------------------------------------------
 FROM source AS build

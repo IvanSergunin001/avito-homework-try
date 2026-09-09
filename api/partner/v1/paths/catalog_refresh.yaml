@@ -1,0 +1,25 @@
+post:
+  operationId: refreshCatalog
+  summary: Обновить каталог внеочередно (предоставляет площадка)
+  description: |
+    Заведение просит площадку забрать меню сейчас, не дожидаясь очередного цикла
+    синхронизации: так изменение цены или стоп-листа доезжает до витрины сразу.
+
+    Ответ `202` означает, что просьба принята: синхронизация идёт фоном, её результат
+    в этот ответ не попадает.
+  tags:
+    - platform
+  servers:
+    - url: https://kitchen.avito.ru/api/kitchen/v1/partner
+      description: Площадка
+    - url: http://localhost:8080/api/kitchen/v1/partner
+      description: Локальный запуск через Compose
+  security:
+    - partnerKey: []
+  responses:
+    '202':
+      description: Просьба принята, синхронизация запущена.
+    '401':
+      $ref: '../../../common/v1/components/responses.yaml#/Unauthorized'
+    '403':
+      $ref: '../../../common/v1/components/responses.yaml#/Forbidden'

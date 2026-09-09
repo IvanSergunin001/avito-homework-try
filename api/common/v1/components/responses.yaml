@@ -1,0 +1,35 @@
+# Ответы-отказы, одинаковые во всех API. Тело — общая основа `ProblemBase`: у этих кодов
+# документу нечего добавить сверх неё. Где добавить есть что — отказ по правилам
+# предметной области, где нужны позиция и цена, — документ объявляет ответ у себя.
+
+BadRequest:
+  description: |
+    Запрос не проходит проверку: `code` = `validation_failed`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/ProblemBase'
+
+Unauthorized:
+  description: |
+    Обратившийся не опознан: ключ не передан или неизвестен, `code` = `unauthorized`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/ProblemBase'
+
+Forbidden:
+  description: |
+    Обратившийся опознан, но ресурс не его: `code` = `forbidden`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/ProblemBase'
+
+NotFound:
+  description: |
+    Ресурса с таким идентификатором нет или он недоступен обратившемуся.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/ProblemBase'

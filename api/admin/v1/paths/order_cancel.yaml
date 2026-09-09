@@ -1,0 +1,34 @@
+post:
+  operationId: cancelOrderBySupport
+  summary: Отменить заказ по обращению заведения
+  description: |
+    Отмена, которую заведение не может выполнить само: после начала готовки партнёрский
+    API отменять заказ не позволяет, потому что продукты уже списаны, покупателю нужна
+    компенсация, а безнаказанная отмена — повод для злоупотреблений. Такие случаи проходят
+    через саппорта, и в истории заказа остаётся `cancelled_by = support` с причиной.
+
+    Заказ в терминальном статусе отменить нельзя — `409` с кодом `order_not_cancellable`.
+  tags:
+    - support
+  parameters:
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+    - $ref: '../components/parameters.yaml#/OrderId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/SupportCancellation'
+  responses:
+    '200':
+      description: Заказ отменён саппортом.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'
+    '409':
+      $ref: '../components/responses.yaml#/Conflict'

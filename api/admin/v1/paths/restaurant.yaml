@@ -1,0 +1,27 @@
+patch:
+  operationId: updateRestaurant
+  summary: Изменить реквизиты заведения
+  description: |
+    Меняются только переданные поля: чтобы отключить заведение, знать его адрес не нужно.
+  tags:
+    - onboarding
+  parameters:
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+    - $ref: '../components/parameters.yaml#/RestaurantId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/RestaurantUpdate'
+  responses:
+    '200':
+      description: Реквизиты обновлены.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Restaurant'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

@@ -1,0 +1,22 @@
+get:
+  operationId: getOrder
+  summary: Статус и состав заказа
+  description: |
+    Состав и сумма отдаются такими, какими были в момент оформления: обновление каталога
+    историю покупателя не переписывает. Чужой заказ неотличим от несуществующего — `404`.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters.yaml#/OrderId'
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+  responses:
+    '200':
+      description: Заказ.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

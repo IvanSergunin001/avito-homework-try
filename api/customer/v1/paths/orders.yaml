@@ -1,0 +1,45 @@
+post:
+  operationId: placeOrder
+  summary: Оформить заказ
+  description: |
+    Площадка сохраняет заказ, синхронно спрашивает заведение и возвращает результат.
+    Заведение — источник истины по наличию и цене, поэтому отказы приходят с его слов:
+    `out_of_stock`, `price_changed`, `unknown_product`, `restaurant_closed`.
+
+    Идемпотентность — по `order_id`: повторная отправка того же заказа возвращает `200`
+    с уже созданным заказом, а не создаёт второй.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/NewOrder'
+  responses:
+    '201':
+      description: Заказ создан и принят заведением на рассмотрение.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '200':
+      description: Заказ с таким `order_id` и тем же составом уже был создан — отдаём его.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'
+    '409':
+      $ref: '../components/responses.yaml#/Conflict'
+    '422':
+      $ref: '../components/responses.yaml#/UnprocessableEntity'
+    '502':
+      $ref: '../components/responses.yaml#/BadGateway'
+    '504':
+      $ref: '../components/responses.yaml#/GatewayTimeout'

@@ -1,0 +1,25 @@
+post:
+  operationId: registerRestaurant
+  summary: Зарегистрировать заведение
+  description: |
+    Подключение нового партнёра: заводим заведение и выдаём ему партнёрский ключ.
+    Ключ возвращается один раз — площадка хранит только его хеш.
+  tags:
+    - onboarding
+  parameters:
+    - $ref: '../../../common/v1/components/parameters.yaml#/UserId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/NewRestaurant'
+  responses:
+    '201':
+      description: Заведение зарегистрировано, ключ выдан.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/RegisteredRestaurant'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'

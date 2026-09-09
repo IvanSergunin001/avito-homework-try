@@ -7,7 +7,6 @@
 package httpx
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -15,14 +14,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// HealthPath — путь пробы здоровья. Проба живёт в корне, а не под `/api/v1`: её дёргают
+// HealthPath — путь пробы здоровья. Проба живёт в корне, а не под `/api`: её дёргают
 // Compose, оркестратор и балансировщик, которые о версиях API ничего не знают, и ломать
 // её выпуском новой версии API нельзя.
 const HealthPath = "/healthz"
 
 // NewRouter создаёт роутер с общей обвязкой: идентификатор запроса, лог каждого запроса,
-// восстановление после паники и проба здоровья. Службы монтируют поверх него свои
-// поверхности API.
+// восстановление после паники и проба здоровья. Службы монтируют поверх него свои API.
 func NewRouter(log *slog.Logger) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -42,10 +40,5 @@ func NewRouter(log *slog.Logger) *chi.Mux {
 
 // health отвечает, что процесс жив и способен обслуживать запросы.
 func health(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		slog.ErrorContext(r.Context(), "write health response", slog.Any("error", err))
-	}
+	WriteJSON(r.Context(), w, http.StatusOK, map[string]string{"status": "ok"})
 }

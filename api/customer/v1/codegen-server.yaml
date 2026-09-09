@@ -1,0 +1,8 @@
+# Серверный интерфейс клиентского API площадки. Конфиг лежит рядом со спекой, по которой
+# генерирует: спека и то, что из неё рождается, правятся вместе.
+package: customer_v1
+output: internal/platform/adapters/http/customer_v1/server.gen.go
+generate:
+  chi-server: true
+  strict-server: true
+  models: true

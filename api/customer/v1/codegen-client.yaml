@@ -1,0 +1,7 @@
+# Клиент клиентского API площадки: живёт в модуле `api`, чтобы им могли пользоваться и
+# тесты шва, и любой, кто импортирует контракт, не таща за собой службы.
+package: customer
+output: api/customer/v1/client.gen.go
+generate:
+  client: true
+  models: true

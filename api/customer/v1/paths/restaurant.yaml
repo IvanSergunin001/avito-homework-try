@@ -1,0 +1,18 @@
+get:
+  operationId: getRestaurant
+  summary: Карточка заведения
+  tags:
+    - catalog
+  parameters:
+    - $ref: '../components/parameters.yaml#/RestaurantId'
+  responses:
+    '200':
+      description: Заведение.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Restaurant'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

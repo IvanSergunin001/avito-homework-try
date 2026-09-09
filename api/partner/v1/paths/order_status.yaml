@@ -1,0 +1,42 @@
+post:
+  operationId: notifyOrderStatus
+  summary: Уведомить о смене статуса заказа (предоставляет площадка)
+  description: |
+    Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+    делает: инициатива на стороне заведения.
+
+    Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+    принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+    по нему заведение видит, применилось ли уведомление.
+  tags:
+    - platform
+  servers:
+    - url: https://kitchen.avito.ru/api/kitchen/v1/partner
+      description: Площадка
+    - url: http://localhost:8080/api/kitchen/v1/partner
+      description: Локальный запуск через Compose
+  security:
+    - partnerKey: []
+  parameters:
+    - $ref: '../components/parameters.yaml#/OrderId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/StatusNotification'
+  responses:
+    '200':
+      description: Уведомление принято; в теле — действующий статус заказа.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/OrderStatusState'
+    '400':
+      $ref: '../../../common/v1/components/responses.yaml#/BadRequest'
+    '401':
+      $ref: '../../../common/v1/components/responses.yaml#/Unauthorized'
+    '403':
+      $ref: '../../../common/v1/components/responses.yaml#/Forbidden'
+    '404':
+      $ref: '../../../common/v1/components/responses.yaml#/NotFound'

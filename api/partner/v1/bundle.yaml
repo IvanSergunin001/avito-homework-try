@@ -1,0 +1,639 @@
+openapi: 3.0.3
+info:
+  title: Авито.Кухня — партнёрский контракт
+  version: 1.0.0
+  description: |
+    Контракт интеграции заведения с площадкой. Две стороны, различаются тегом:
+
+    - `restaurant` — операции, которые **обязано реализовать заведение**: постраничная
+      выдача меню, приём заказа, отмена принятого заказа. Заведение со своей системой
+      реализует их само; заведению без своей системы площадка даёт готовую коробку.
+    - `platform` — операции, которые **площадка предоставляет заведению**: внеочередное
+      обновление каталога и уведомление о смене статуса заказа.
+
+    Каталог площадка забирает сама (pull) по расписанию; ручка обновления нужна, чтобы
+    изменение цены или стоп-листа доехало до витрины сразу, а не по таймеру.
+
+    Операции площадки закрыты партнёрским ключом: `Authorization: Bearer <ключ>`.
+    Стандартный заголовок выбран вместо произвольного `X-`-заголовка потому, что прокси,
+    логгеры и системы трассировки маскируют `Authorization` по умолчанию, тогда как
+    произвольный заголовок утекает в логи открытым текстом.
+
+    Операции заведения в MVP вызываются без аутентификации: площадка не хранит выданного
+    ей заведением секрета (в её схеме есть только хеш партнёрского ключа для входящих
+    вызовов). В эксплуатации сюда встают mTLS или выдаваемый при онбординге токен
+    площадки — см. раздел упрощений в README.
+
+    Ошибки обеих сторон — `application/problem+json` (RFC 7807, актуализирован RFC 9457)
+    с дополнительным полем `code`: машиночитаемая причина отказа.
+
+    Общие с клиентской и админской спецификациями схемы — основа ошибки, список кодов
+    причин, страница выдачи и деньги — лежат в `api/common/v1` и подключаются `$ref`'ом.
+    Партнёру это незаметно: наружу уходит `bundle.yaml`, в котором ссылки уже развёрнуты.
+servers:
+  - url: '{restaurantBaseUrl}/api/kitchen/v1/restaurant'
+    description: |
+      Заведение. `restaurantBaseUrl` — адрес, который заведение сообщило площадке при
+      онбординге; операции с тегом `platform` переопределяют сервер на адрес площадки.
+    variables:
+      restaurantBaseUrl:
+        default: https://restaurant.example.org
+        description: |
+          При локальном запуске через Compose — `http://localhost:8081`; операции с тегом
+          `platform` живут на площадке, `http://localhost:8080`.
+security: []
+tags:
+  - name: restaurant
+    description: Реализует заведение
+  - name: platform
+    description: Реализует площадка
+paths:
+  /menu:
+    get:
+      operationId: listMenu
+      summary: Меню заведения (реализует заведение)
+      description: |
+        Постраничная выдача меню. Площадка забирает меню целиком, страницу за страницей, и
+        обновляет каталог по паре «заведение + `external_id`»; позиции, исчезнувшие из выдачи,
+        деактивируются на витрине.
+
+        Выгрузка применяется всё-или-ничего: если площадка не смогла дочитать меню до конца,
+        она отменяет синхронизацию целиком и оставляет прежний каталог — частично применённое
+        меню хуже устаревшего.
+      tags:
+        - restaurant
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Страница меню.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /orders:
+    post:
+      operationId: acceptOrder
+      summary: Принять заказ (реализует заведение)
+      description: |
+        Синхронная проверка заказа заведением: заведение — источник истины по наличию и цене.
+        Успешный ответ означает, что заказ принят на рассмотрение; площадка переводит его в
+        `under_review` и дальше ждёт уведомлений о статусах.
+
+        Повтор с тем же `Idempotency-Key` не создаёт второй заказ: заведение возвращает
+        результат первой попытки. Номер попытки приходит в `Idempotency-Attempt`.
+      tags:
+        - restaurant
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IdempotencyAttempt'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncomingOrder'
+      responses:
+        '200':
+          description: Заказ с этим ключом идемпотентности уже принят — отдаём результат первой попытки.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAcceptance'
+        '201':
+          description: Заказ принят на рассмотрение.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAcceptance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /orders/{orderId}/cancel:
+    post:
+      operationId: cancelAcceptedOrder
+      summary: Отменить принятый заказ (реализует заведение)
+      description: |
+        Площадка просит заведение отменить заказ — так доезжает отмена покупателем.
+        После начала готовки заведение вправе отказать кодом `order_not_cancellable`.
+        Повторная отмена уже отменённого заказа возвращает `200`: ретрай не должен ломаться.
+      tags:
+        - restaurant
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancellationRequest'
+      responses:
+        '200':
+          description: Заказ отменён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCancellation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /catalog/refresh:
+    post:
+      operationId: refreshCatalog
+      summary: Обновить каталог внеочередно (предоставляет площадка)
+      description: |
+        Заведение просит площадку забрать меню сейчас, не дожидаясь очередного цикла
+        синхронизации: так изменение цены или стоп-листа доезжает до витрины сразу.
+
+        Ответ `202` означает, что просьба принята: синхронизация идёт фоном, её результат
+        в этот ответ не попадает.
+      tags:
+        - platform
+      servers:
+        - url: https://kitchen.avito.ru/api/kitchen/v1/partner
+          description: Площадка
+        - url: http://localhost:8080/api/kitchen/v1/partner
+          description: Локальный запуск через Compose
+      security:
+        - partnerKey: []
+      responses:
+        '202':
+          description: Просьба принята, синхронизация запущена.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /orders/{orderId}/status:
+    post:
+      operationId: notifyOrderStatus
+      summary: Уведомить о смене статуса заказа (предоставляет площадка)
+      description: |
+        Заведение сообщает площадке, что заказ продвинулся. Поллинга статусов площадка не
+        делает: инициатива на стороне заведения.
+
+        Приём идемпотентен: переходы монотонны, поэтому повтор и запоздавшее уведомление
+        принимаются и ничего не меняют. Ответ всегда содержит действующий статус заказа —
+        по нему заведение видит, применилось ли уведомление.
+      tags:
+        - platform
+      servers:
+        - url: https://kitchen.avito.ru/api/kitchen/v1/partner
+          description: Площадка
+        - url: http://localhost:8080/api/kitchen/v1/partner
+          description: Локальный запуск через Compose
+      security:
+        - partnerKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusNotification'
+      responses:
+        '200':
+          description: Уведомление принято; в теле — действующий статус заказа.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    partnerKey:
+      type: http
+      scheme: bearer
+      description: |
+        Партнёрский ключ, выданный заведению при онбординге. Площадка находит заведение
+        по хешу ключа: самого ключа она не хранит.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Размер страницы меню: по умолчанию 100, максимум 500. Страничная выдача — обязанность
+        заведения, а не рекомендация.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Сколько записей пропустить от начала выдачи.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Ключ идемпотентности отправки заказа — совпадает с `order_id` в теле. Повтор с тем же
+        ключом не создаёт второй заказ, а возвращает результат первого.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyAttempt:
+      name: Idempotency-Attempt
+      in: header
+      required: true
+      description: |
+        Номер попытки отправки, начиная с 1: он растёт на каждом повторе, чтобы принимающая
+        сторона отличала настоящий повтор от первой доставки. Стандарта на номер попытки нет
+        (стандартизован только `Idempotency-Key`), поэтому заголовок описан здесь как часть
+        контракта; префикс `X-` не используется — RFC 6648.
+      schema:
+        type: integer
+        minimum: 1
+      example: 1
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Идентификатор заказа на площадке.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Money:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
+      example: 45000
+    MenuItem:
+      type: object
+      description: |
+        Позиция меню заведения. `external_id` — идентификатор в системе заведения; площадка
+        обновляет каталог по паре «заведение + `external_id`», поэтому он обязан быть
+        стабильным во времени. Позиция, исчезнувшая из выдачи, деактивируется на витрине.
+      required:
+        - external_id
+        - name
+        - price
+        - is_available
+      properties:
+        external_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Идентификатор позиции в системе заведения. Стабилен между выгрузками.
+          example: croissant-almond
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Круассан с миндалём
+        description:
+          type: string
+          maxLength: 2000
+          example: Слоёное тесто, миндальный крем
+        price:
+          $ref: '#/components/schemas/Money'
+        is_available:
+          type: boolean
+          description: |
+            Ложь — позиция в стоп-листе: она видна покупателю, но заказать её нельзя.
+          example: true
+    PageMeta:
+      type: object
+      description: |
+        Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
+        которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
+      required:
+        - limit
+        - offset
+        - total
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          description: Сколько записей запрошено на страницу.
+          example: 20
+        offset:
+          type: integer
+          minimum: 0
+          description: Сколько записей пропущено от начала выдачи.
+          example: 0
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Сколько записей всего удовлетворяет запросу.
+          example: 42
+    MenuPage:
+      type: object
+      description: Страница меню заведения.
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuItem'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+    ProblemCode:
+      type: string
+      description: |
+        Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+        разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+        список — API объявляет и те коды, которых сам не возвращает.
+      enum:
+        - validation_failed
+        - not_implemented
+        - internal_error
+        - unauthorized
+        - forbidden
+        - restaurant_not_found
+        - product_not_found
+        - order_not_found
+        - out_of_stock
+        - price_changed
+        - unknown_product
+        - restaurant_closed
+        - order_not_cancellable
+        - idempotency_key_reuse
+        - restaurant_unavailable
+      example: validation_failed
+    ProblemBase:
+      type: object
+      description: |
+        Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+        Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+        Своё поле API добавляет к этой основе через `allOf`.
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+          description: |
+            Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+            причины нет, идентичность несёт `code`.
+          example: about:blank
+        title:
+          type: string
+          description: Короткое человекочитаемое название проблемы.
+          example: Некорректный запрос
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Код ответа HTTP, продублированный в теле.
+          example: 400
+        detail:
+          type: string
+          description: Пояснение для человека, привязанное к конкретному случаю.
+          example: 'limit: допустимы значения от 1 до 100'
+        instance:
+          type: string
+          format: uri-reference
+          nullable: true
+          description: |
+            Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+            когда по отказу нужно будет попадать в журнал или в обращение поддержки.
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+    Quantity:
+      type: integer
+      minimum: 1
+      maximum: 100
+      description: Количество единиц товара в позиции заказа.
+      example: 2
+    IncomingOrderItem:
+      type: object
+      description: |
+        Позиция передаваемого заказа. Цена — та, по которой площадка показала позицию
+        покупателю: заведение сверяет её со своей и при расхождении отказывает кодом
+        `price_changed`, сообщая актуальную цену.
+      required:
+        - external_id
+        - quantity
+        - price
+      properties:
+        external_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: croissant-almond
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+        price:
+          $ref: '#/components/schemas/Money'
+    IncomingOrder:
+      type: object
+      description: |
+        Заказ, переданный площадкой заведению. `order_id` — идентификатор заказа на площадке;
+        он же приходит в заголовке `Idempotency-Key`, по нему заведение узнаёт повтор.
+      required:
+        - order_id
+        - address
+        - items
+        - total
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        address:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Адрес доставки в свободной форме.
+          example: Москва, Лесная 7, кв. 12
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/IncomingOrderItem'
+        total:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Сумма, посчитанная площадкой. Заведение сверяет её со своим расчётом.
+        placed_at:
+          type: string
+          format: date-time
+          description: Когда покупатель оформил заказ.
+    OrderAcceptance:
+      type: object
+      description: |
+        Подтверждение того, что заведение приняло заказ на рассмотрение. Площадка переводит
+        заказ в `under_review` и дальше ждёт уведомлений о статусах.
+      required:
+        - order_id
+        - accepted_at
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        accepted_at:
+          type: string
+          format: date-time
+    Problem:
+      description: |
+        Отказ партнёрского контракта: общая основа `problem+json` плюс поля, которые нужны
+        сторонам интеграции, — позиция меню, из-за которой отказан заказ, и её актуальная цена.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
+        - type: object
+          properties:
+            product_external_id:
+              type: string
+              maxLength: 200
+              description: |
+                Позиция меню, из-за которой отказан заказ. Заполняется для кодов `out_of_stock`,
+                `price_changed` и `unknown_product`: площадке нужно знать, какую позицию чинить.
+              example: croissant-almond
+            current_price:
+              allOf:
+                - $ref: '#/components/schemas/Money'
+              description: |
+                Актуальная цена позиции по данным заведения. Обязательна при коде `price_changed`:
+                площадка внеочередно обновляет каталог и показывает покупателю новую цену.
+    CancellationRequest:
+      type: object
+      description: Просьба площадки отменить принятый заказ.
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: Причина отмены для оператора заведения.
+          example: Отмена по просьбе покупателя
+    OrderCancellation:
+      type: object
+      description: Подтверждение отмены заказа заведением.
+      required:
+        - order_id
+        - cancelled_at
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        cancelled_at:
+          type: string
+          format: date-time
+    NotifiedStatus:
+      type: string
+      description: |
+        Статус, о котором заведение уведомляет площадку. `pending` и `under_review` в
+        перечень не входят: их ставит сама площадка — при создании заказа и по успешному
+        синхронному ответу на приём заказа.
+      enum:
+        - confirmed
+        - cooking
+        - delivering
+        - completed
+        - cancelled
+      example: cooking
+    StatusNotification:
+      type: object
+      description: |
+        Уведомление о смене статуса заказа. Приём идемпотентен: переходы монотонны, поэтому
+        повторное уведомление о том же статусе и уведомление о более раннем статусе после
+        более позднего принимаются и ничего не меняют — это и есть защита от ретраев.
+        Уведомление о заказе в терминальном статусе тоже принимается и ничего не меняет.
+      required:
+        - status
+        - occurred_at
+      properties:
+        status:
+          $ref: '#/components/schemas/NotifiedStatus'
+        occurred_at:
+          type: string
+          format: date-time
+          description: |
+            Когда статус сменился у заведения. По нему площадка отличает запоздавшее
+            уведомление от свежего.
+        reason:
+          type: string
+          maxLength: 500
+          description: Причина, если заведение отменило заказ. Показывается покупателю.
+          example: Закончились продукты
+    OrderStatusState:
+      type: object
+      description: Статус заказа на площадке после применения уведомления.
+      required:
+        - order_id
+        - status
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        status:
+          type: string
+          description: Действующий статус заказа. Может отличаться от присланного, если уведомление опоздало.
+          enum:
+            - pending
+            - under_review
+            - confirmed
+            - cooking
+            - delivering
+            - completed
+            - cancelled
+          example: cooking
+  responses:
+    BadRequest:
+      description: |
+        Запрос не проходит проверку: `code` = `validation_failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    Conflict:
+      description: |
+        Отказ по правилам предметной области: стоп-лист, изменившаяся цена, неизвестная позиция, закрытое заведение, непозволительная отмена.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: |
+        Ресурса с таким идентификатором нет или он недоступен обратившемуся.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    Unauthorized:
+      description: |
+        Обратившийся не опознан: ключ не передан или неизвестен, `code` = `unauthorized`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    Forbidden:
+      description: |
+        Обратившийся опознан, но ресурс не его: `code` = `forbidden`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'

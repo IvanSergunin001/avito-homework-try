@@ -1,0 +1,470 @@
+openapi: 3.0.3
+info:
+  title: Авито.Кухня — админское API
+  version: 1.0.0
+  description: |
+    Регистрация заведений, правка их реквизитов и отмена заказа саппортом.
+
+    Защиты у этих операций в MVP нет: сотрудник называет себя тем же заголовком `User-Id`,
+    что и покупатель. Цена решения названа прямо — кто угодно, знающий путь, зарегистрирует
+    заведение или отменит чужой заказ; для демо это приемлемо (ручки не опубликованы, данные
+    показательные), для эксплуатации нет. Чем это закрывается в проде — в разделе упрощений
+    README.
+
+    Ошибки — `application/problem+json` (RFC 7807, актуализирован RFC 9457) с
+    дополнительным полем `code`: машиночитаемая причина отказа.
+
+    Общие с клиентской и партнёрской спецификациями схемы — основа ошибки и список кодов
+    причин — лежат в `api/common/v1` и подключаются `$ref`'ом. Схемы страницы здесь нет:
+    коллекций админское API не отдаёт.
+servers:
+  - url: https://kitchen.avito.ru/api/kitchen/v1/admin
+    description: Площадка
+  - url: http://localhost:8080/api/kitchen/v1/admin
+    description: Локальный запуск через Compose
+security: []
+tags:
+  - name: onboarding
+    description: Подключение заведений и их реквизиты
+  - name: support
+    description: Разбор нештатных ситуаций
+paths:
+  /restaurants:
+    post:
+      operationId: registerRestaurant
+      summary: Зарегистрировать заведение
+      description: |
+        Подключение нового партнёра: заводим заведение и выдаём ему партнёрский ключ.
+        Ключ возвращается один раз — площадка хранит только его хеш.
+      tags:
+        - onboarding
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewRestaurant'
+      responses:
+        '201':
+          description: Заведение зарегистрировано, ключ выдан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisteredRestaurant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /restaurants/{restaurantId}:
+    patch:
+      operationId: updateRestaurant
+      summary: Изменить реквизиты заведения
+      description: |
+        Меняются только переданные поля: чтобы отключить заведение, знать его адрес не нужно.
+      tags:
+        - onboarding
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestaurantUpdate'
+      responses:
+        '200':
+          description: Реквизиты обновлены.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Restaurant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /orders/{orderId}/cancel:
+    post:
+      operationId: cancelOrderBySupport
+      summary: Отменить заказ по обращению заведения
+      description: |
+        Отмена, которую заведение не может выполнить само: после начала готовки партнёрский
+        API отменять заказ не позволяет, потому что продукты уже списаны, покупателю нужна
+        компенсация, а безнаказанная отмена — повод для злоупотреблений. Такие случаи проходят
+        через саппорта, и в истории заказа остаётся `cancelled_by = support` с причиной.
+
+        Заказ в терминальном статусе отменить нельзя — `409` с кодом `order_not_cancellable`.
+      tags:
+        - support
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportCancellation'
+      responses:
+        '200':
+          description: Заказ отменён саппортом.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+components:
+  parameters:
+    UserId:
+      name: User-Id
+      in: header
+      required: true
+      description: |
+        Идентификатор того, кто обращается: покупателя в клиентском API, сотрудника — в
+        админском. Не удостоверение, а самопровозглашённое значение, которому площадка верит по
+        условию задания (README, «Упрощения»). Префикс `X-` не используется — RFC 6648.
+      schema:
+        type: string
+        format: uuid
+    RestaurantId:
+      name: restaurantId
+      in: path
+      required: true
+      description: Идентификатор заведения.
+      schema:
+        type: string
+        format: uuid
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Идентификатор заказа.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    NewRestaurant:
+      type: object
+      description: Регистрация заведения.
+      required:
+        - name
+        - base_url
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Пекарня «Батон»
+        base_url:
+          type: string
+          format: uri
+          maxLength: 500
+          description: Базовый адрес заведения, к которому площадка добавляет пути партнёрского контракта.
+          example: https://baton.example.org
+    RegisteredRestaurant:
+      type: object
+      description: |
+        Только что зарегистрированное заведение вместе с партнёрским ключом. Ключ показывается
+        один раз: площадка хранит только его хеш и восстановить его не сможет — потерянный ключ
+        перевыпускается.
+      required:
+        - id
+        - name
+        - base_url
+        - is_active
+        - partner_key
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        name:
+          type: string
+          example: Пекарня «Батон»
+        base_url:
+          type: string
+          format: uri
+          example: https://baton.example.org
+        is_active:
+          type: boolean
+          example: true
+        partner_key:
+          type: string
+          description: Партнёрский ключ для заголовка `Authorization` партнёрского API.
+          example: pk_018f2b5c1f4a7c3e9a102b8f5d7c1a01
+    ProblemCode:
+      type: string
+      description: |
+        Машиночитаемая причина отказа — единственный список кодов на все API: два списка
+        разъезжаются, и один и тот же отказ начинает называться по-разному. Плата за общий
+        список — API объявляет и те коды, которых сам не возвращает.
+      enum:
+        - validation_failed
+        - not_implemented
+        - internal_error
+        - unauthorized
+        - forbidden
+        - restaurant_not_found
+        - product_not_found
+        - order_not_found
+        - out_of_stock
+        - price_changed
+        - unknown_product
+        - restaurant_closed
+        - order_not_cancellable
+        - idempotency_key_reuse
+        - restaurant_unavailable
+      example: validation_failed
+    ProblemBase:
+      type: object
+      description: |
+        Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+        Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+        Своё поле API добавляет к этой основе через `allOf`.
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+          description: |
+            Идентификатор типа проблемы. Пока всегда `about:blank`: отдельных страниц под
+            причины нет, идентичность несёт `code`.
+          example: about:blank
+        title:
+          type: string
+          description: Короткое человекочитаемое название проблемы.
+          example: Некорректный запрос
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: Код ответа HTTP, продублированный в теле.
+          example: 400
+        detail:
+          type: string
+          description: Пояснение для человека, привязанное к конкретному случаю.
+          example: 'limit: допустимы значения от 1 до 100'
+        instance:
+          type: string
+          format: uri-reference
+          nullable: true
+          description: |
+            Ссылка на конкретный случай отказа, а не на его тип. Пока не заполняется; появится,
+            когда по отказу нужно будет попадать в журнал или в обращение поддержки.
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+    RestaurantUpdate:
+      type: object
+      description: |
+        Правка реквизитов заведения: применяются только переданные поля, остальные остаются как
+        были. Пустое тело — не ошибка, а отсутствие изменений.
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Пекарня «Батон»
+        base_url:
+          type: string
+          format: uri
+          maxLength: 500
+          example: https://baton.example.org
+        is_active:
+          type: boolean
+          example: true
+    Restaurant:
+      type: object
+      description: Заведение глазами администратора площадки — с реквизитами интеграции.
+      required:
+        - id
+        - name
+        - base_url
+        - is_active
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        name:
+          type: string
+          example: Пекарня «Батон»
+        base_url:
+          type: string
+          format: uri
+          example: https://baton.example.org
+        is_active:
+          type: boolean
+          description: Ложь — заведение не показывается покупателю и его меню не синхронизируется.
+          example: true
+        last_synced_at:
+          type: string
+          format: date-time
+          description: Когда каталог заведения синхронизировался последний раз.
+        created_at:
+          type: string
+          format: date-time
+          description: Когда заведение зарегистрировали на площадке.
+        updated_at:
+          type: string
+          format: date-time
+          description: Когда его реквизиты правили последний раз.
+    SupportCancellation:
+      type: object
+      description: |
+        Отмена заказа саппортом. Причина обязательна: заказ отменяется уже после списания
+        продуктов, её видит покупатель, и по ней же разбираются злоупотребления.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          example: Заведение сообщило, что закончились продукты
+    OrderStatus:
+      type: string
+      description: |
+        Статус заказа. Нетерминальные: `pending`, `under_review`, `confirmed`, `cooking`,
+        `delivering`; терминальные: `completed`, `cancelled` — переходов из них нет.
+      enum:
+        - pending
+        - under_review
+        - confirmed
+        - cooking
+        - delivering
+        - completed
+        - cancelled
+      example: cooking
+    Money:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Сумма в копейках — целое в минорных единицах (почему так, см. README).
+      example: 45000
+    Quantity:
+      type: integer
+      minimum: 1
+      maximum: 100
+      description: Количество единиц товара в позиции заказа.
+      example: 2
+    OrderItem:
+      type: object
+      description: Позиция заказа снимком на момент оформления.
+      required:
+        - product_id
+        - name
+        - price
+        - quantity
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a02
+        name:
+          type: string
+          example: Круассан с миндалём
+        price:
+          $ref: '#/components/schemas/Money'
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+    CancelledBy:
+      type: string
+      description: |
+        Кто отменил заказ. Отмена заведением после начала готовки идёт через саппорт, поэтому
+        `support` — самостоятельное значение, а не разновидность `restaurant`.
+      enum:
+        - customer
+        - restaurant
+        - support
+      example: customer
+    Order:
+      type: object
+      description: Заказ глазами саппорта.
+      required:
+        - id
+        - customer_id
+        - restaurant_id
+        - status
+        - address
+        - items
+        - total
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        customer_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+        restaurant_id:
+          type: string
+          format: uuid
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a01
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        address:
+          type: string
+          example: Москва, Лесная 7, кв. 12
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total:
+          $ref: '#/components/schemas/Money'
+        cancelled_by:
+          $ref: '#/components/schemas/CancelledBy'
+        cancellation_reason:
+          type: string
+          maxLength: 500
+          example: Закончились продукты
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Problem:
+      description: |
+        Отказ админского API. Своих полей сверх общей основы `problem+json` у неё нет:
+        инструменту саппорта хватает кода причины и текста.
+      allOf:
+        - $ref: '#/components/schemas/ProblemBase'
+  responses:
+    BadRequest:
+      description: |
+        Запрос не проходит проверку: `code` = `validation_failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    NotFound:
+      description: |
+        Ресурса с таким идентификатором нет или он недоступен обратившемуся.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    Conflict:
+      description: |
+        Заказ уже в терминальном статусе: отменять нечего, `code` = `order_not_cancellable`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
