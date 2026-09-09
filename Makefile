@@ -1,9 +1,10 @@
 # Всё, кроме `docker compose`, выполняется внутри контейнеров: локально установленный
 # Go не нужен ни для сборки, ни для линтера, ни для тестов (см. Dockerfile).
 
-API_OUT    ?= .api-artifacts
-TEST_IMAGE ?= avito-kitchen-test
-TEST_ARGS  ?= ./...
+API_OUT      ?= .api-artifacts
+TEST_IMAGE   ?= avito-kitchen-test
+TEST_ARGS    ?= ./...
+TEST_TIMEOUT ?= 30m
 DOCKER_SOCK := /var/run/docker.sock
 # Имя, под которым из контейнера с тестами виден хост Docker — машина, где опубликованы
 # порты и базы Compose, и контейнеров testcontainers. Docker Desktop заводит это имя сам,
@@ -100,10 +101,13 @@ migration: ## Создать миграцию: make migration name=add_orders [c
 # Строку подключения из TEST_DB_DSN контейнер получает как есть: `localhost` в ней
 # подменяет на адрес хоста Docker сама оснастка (`internal/pkg/testdb`) — она же и знает,
 # что внутри контейнера `localhost` означает не ту машину, на которой человек её писал.
-test: ## Тесты; сокет Docker нужен тестам с testcontainers
+#
+# Предел прогона больше стандартных десяти минут: сквозной тест поднимает систему целиком,
+# и на машине, где образы ещё не собраны, в это время попадает сборка обеих служб.
+test: ## Тесты; сокет Docker нужен и оснастке базы, и сквозному тесту
 	docker build --target test --tag $(TEST_IMAGE) .
 	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) \
 		--add-host $(DOCKER_HOST_ALIAS):host-gateway \
 		--env TESTCONTAINERS_HOST_OVERRIDE=$(DOCKER_HOST_ALIAS) \
 		--env TEST_DB_DSN --env TEST_KEEP_DB \
-		$(TEST_IMAGE) go test $(if $(TEST_KEEP_DB),-v) $(TEST_ARGS)
+		$(TEST_IMAGE) go test -timeout $(TEST_TIMEOUT) $(if $(TEST_KEEP_DB),-v) $(TEST_ARGS)
