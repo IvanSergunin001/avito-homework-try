@@ -110,8 +110,8 @@ func searchFilter(query application.ProductQuery) (string, []any) {
 	conditions := []string{"r.is_active"}
 	args := make([]any, 0, 2)
 
-	if query.Restaurant != uuid.Nil {
-		args = append(args, query.Restaurant)
+	if query.Restaurant != nil {
+		args = append(args, *query.Restaurant)
 		conditions = append(conditions, fmt.Sprintf("p.restaurant_id = $%d", len(args)))
 	}
 	if query.NameContains != "" {

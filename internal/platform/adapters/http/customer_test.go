@@ -41,11 +41,8 @@ func (p *platform) restaurantPage(
 	if err != nil {
 		t.Fatalf("запросить каталог: %v", err)
 	}
-	if resp.JSON200 == nil {
-		t.Fatalf("каталог вернул %d, ожидали 200: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.JSON200
+	return gotBody(t, "каталог заведений", "200", resp.JSON200, resp.HTTPResponse, resp.Body)
 }
 
 func TestCatalogPageUsesWindowDeclaredInContractWhenClientDoesNotAskForOne(t *testing.T) {
@@ -154,14 +151,9 @@ func TestOperationDescribedByContractButNotYetImplementedAnswersNotImplemented(t
 	}
 }
 
-// names — названия заведений страницы в том порядке, в каком их отдала площадка.
-func names(page customer.RestaurantPage) []string {
-	got := make([]string, 0, len(page.Items))
-	for _, item := range page.Items {
-		got = append(got, item.Name)
-	}
-
-	return got
+// restaurantNames — названия заведений страницы в том порядке, в каком их отдала площадка.
+func restaurantNames(page customer.RestaurantPage) []string {
+	return names(page.Items, func(item customer.Restaurant) string { return item.Name })
 }
 
 // card запрашивает карточку заведения и требует, чтобы ответ был успешным.
@@ -172,11 +164,8 @@ func (p *platform) card(t *testing.T, id uuid.UUID) customer.Restaurant {
 	if err != nil {
 		t.Fatalf("запросить карточку заведения: %v", err)
 	}
-	if resp.JSON200 == nil {
-		t.Fatalf("карточка вернула %d, ожидали 200: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.JSON200
+	return gotBody(t, "карточка заведения", "200", resp.JSON200, resp.HTTPResponse, resp.Body)
 }
 
 // missingCard требует, чтобы карточка заведения не нашлась, и возвращает отказ.
@@ -187,11 +176,8 @@ func (p *platform) missingCard(t *testing.T, id uuid.UUID) customer.NotFound {
 	if err != nil {
 		t.Fatalf("запросить карточку заведения: %v", err)
 	}
-	if resp.ApplicationproblemJSON404 == nil {
-		t.Fatalf("карточка вернула %d, ожидали 404: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.ApplicationproblemJSON404
+	return gotBody(t, "карточка заведения", "404", resp.ApplicationproblemJSON404, resp.HTTPResponse, resp.Body)
 }
 
 func TestCatalogShowsTheRestaurantsThatWork(t *testing.T) {
@@ -203,7 +189,7 @@ func TestCatalogShowsTheRestaurantsThatWork(t *testing.T) {
 
 	page := platform.restaurantPage(t, &customer.ListRestaurantsParams{})
 
-	got := names(page)
+	got := restaurantNames(page)
 	slices.Sort(got)
 	want := []string{"Кофейня «Пар»", "Пекарня «Батон»"}
 	if !slices.Equal(got, want) {
@@ -223,7 +209,7 @@ func TestRestaurantThatStoppedWorkingDisappearsFromTheCatalog(t *testing.T) {
 
 	page := platform.restaurantPage(t, &customer.ListRestaurantsParams{})
 
-	if got := names(page); !slices.Equal(got, []string{"Пекарня «Батон»"}) {
+	if got := restaurantNames(page); !slices.Equal(got, []string{"Пекарня «Батон»"}) {
 		t.Errorf("в витрине %v, ожидали одну «Пекарню «Батон»»: неработающему заведению в выдаче не место", got)
 	}
 	// Счётчик считает то же, что и выдача: иначе клиент листал бы страницы, на которых
@@ -251,7 +237,7 @@ func TestCatalogWindowWalksTheWholeListWithoutLosingOrRepeatingRestaurants(t *te
 			t.Errorf("offset=%d: total=%d, ожидали 3 — общее число не зависит от окна",
 				offset, page.Page.Total)
 		}
-		seen = append(seen, names(page)...)
+		seen = append(seen, restaurantNames(page)...)
 	}
 
 	slices.Sort(seen)

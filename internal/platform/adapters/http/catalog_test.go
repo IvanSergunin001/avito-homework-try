@@ -17,12 +17,7 @@ import (
 
 // productNames — названия товаров страницы в том порядке, в каком их отдала площадка.
 func productNames(page customer.ProductPage) []string {
-	names := make([]string, 0, len(page.Items))
-	for _, item := range page.Items {
-		names = append(names, item.Name)
-	}
-
-	return names
+	return names(page.Items, func(item customer.Product) string { return item.Name })
 }
 
 // query — поисковая подстрока параметром выдачи.
@@ -40,11 +35,8 @@ func (p *platform) menu(
 	if err != nil {
 		t.Fatalf("запросить меню заведения: %v", err)
 	}
-	if resp.JSON200 == nil {
-		t.Fatalf("меню вернуло %d, ожидали 200: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.JSON200
+	return gotBody(t, "меню заведения", "200", resp.JSON200, resp.HTTPResponse, resp.Body)
 }
 
 // missingMenu требует, чтобы меню заведения не нашлось, и возвращает отказ.
@@ -56,11 +48,8 @@ func (p *platform) missingMenu(t *testing.T, restaurant uuid.UUID) customer.NotF
 	if err != nil {
 		t.Fatalf("запросить меню заведения: %v", err)
 	}
-	if resp.ApplicationproblemJSON404 == nil {
-		t.Fatalf("меню вернуло %d, ожидали 404: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.ApplicationproblemJSON404
+	return gotBody(t, "меню заведения", "404", resp.ApplicationproblemJSON404, resp.HTTPResponse, resp.Body)
 }
 
 // refusedMenu требует, чтобы меню отказало по неверным параметрам, и возвращает отказ.
@@ -73,26 +62,20 @@ func (p *platform) refusedMenu(
 	if err != nil {
 		t.Fatalf("запросить меню заведения: %v", err)
 	}
-	if resp.ApplicationproblemJSON400 == nil {
-		t.Fatalf("меню вернуло %d, ожидали 400: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.ApplicationproblemJSON400
+	return gotBody(t, "меню заведения", "400", resp.ApplicationproblemJSON400, resp.HTTPResponse, resp.Body)
 }
 
-// found запрашивает поиск по всем заведениям и требует, чтобы ответ был успешным.
-func (p *platform) found(t *testing.T, params *customer.SearchProductsParams) customer.ProductPage {
+// searchPage запрашивает поиск по всем заведениям и требует, чтобы ответ был успешным.
+func (p *platform) searchPage(t *testing.T, params *customer.SearchProductsParams) customer.ProductPage {
 	t.Helper()
 
 	resp, err := p.catalog(t).SearchProductsWithResponse(context.Background(), params)
 	if err != nil {
 		t.Fatalf("запросить поиск: %v", err)
 	}
-	if resp.JSON200 == nil {
-		t.Fatalf("поиск вернул %d, ожидали 200: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.JSON200
+	return gotBody(t, "поиск", "200", resp.JSON200, resp.HTTPResponse, resp.Body)
 }
 
 // refusedSearch требует, чтобы поиск отказал по неверным параметрам, и возвращает отказ.
@@ -103,11 +86,8 @@ func (p *platform) refusedSearch(t *testing.T, params *customer.SearchProductsPa
 	if err != nil {
 		t.Fatalf("запросить поиск: %v", err)
 	}
-	if resp.ApplicationproblemJSON400 == nil {
-		t.Fatalf("поиск вернул %d, ожидали 400: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.ApplicationproblemJSON400
+	return gotBody(t, "поиск", "400", resp.ApplicationproblemJSON400, resp.HTTPResponse, resp.Body)
 }
 
 // product запрашивает карточку товара и требует, чтобы ответ был успешным.
@@ -118,11 +98,8 @@ func (p *platform) product(t *testing.T, id uuid.UUID) customer.Product {
 	if err != nil {
 		t.Fatalf("запросить карточку товара: %v", err)
 	}
-	if resp.JSON200 == nil {
-		t.Fatalf("карточка вернула %d, ожидали 200: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.JSON200
+	return gotBody(t, "карточка товара", "200", resp.JSON200, resp.HTTPResponse, resp.Body)
 }
 
 // missingProduct требует, чтобы карточка товара не нашлась, и возвращает отказ.
@@ -133,11 +110,8 @@ func (p *platform) missingProduct(t *testing.T, id uuid.UUID) customer.NotFound 
 	if err != nil {
 		t.Fatalf("запросить карточку товара: %v", err)
 	}
-	if resp.ApplicationproblemJSON404 == nil {
-		t.Fatalf("карточка вернула %d, ожидали 404: %s", resp.HTTPResponse.StatusCode, resp.Body)
-	}
 
-	return *resp.ApplicationproblemJSON404
+	return gotBody(t, "карточка товара", "404", resp.ApplicationproblemJSON404, resp.HTTPResponse, resp.Body)
 }
 
 func TestMenuIsGivenPageByPageWithTheWindowDeclaredInContractWhenClientDoesNotAskForOne(t *testing.T) {
@@ -362,7 +336,7 @@ func TestSearchLooksForADishAcrossAllRestaurantsAtOnce(t *testing.T) {
 	platform.addProduct(t, coffee, menuItem{Name: "Круассан с шоколадом", Price: 39000})
 	platform.addProduct(t, coffee, menuItem{Name: "Капучино", Price: 25000})
 
-	page := platform.found(t, &customer.SearchProductsParams{Q: query("круассан")})
+	page := platform.searchPage(t, &customer.SearchProductsParams{Q: query("круассан")})
 
 	got := productNames(page)
 	slices.Sort(got)
@@ -403,7 +377,7 @@ func TestSearchFindsProductByPartOfItsNameRegardlessOfCase(t *testing.T) {
 	platform.addProduct(t, restaurant, menuItem{Name: "Круассан с миндалём", Price: 45000})
 
 	for _, text := range []string{"МИНДАЛ", "миндал", "уассан с"} {
-		page := platform.found(t, &customer.SearchProductsParams{Q: query(text)})
+		page := platform.searchPage(t, &customer.SearchProductsParams{Q: query(text)})
 		if got := productNames(page); !slices.Equal(got, []string{"Круассан с миндалём"}) {
 			t.Errorf("по запросу %q нашлось %v, ожидали «Круассан с миндалём»", text, got)
 		}
@@ -419,7 +393,7 @@ func TestSearchDoesNotShowProductsOfRestaurantsThatStoppedWorking(t *testing.T) 
 	platform.addProduct(t, working, menuItem{Name: "Круассан с миндалём", Price: 45000})
 	platform.addProduct(t, closed, menuItem{Name: "Круассан вчерашний", Price: 1000})
 
-	page := platform.found(t, &customer.SearchProductsParams{Q: query("круассан")})
+	page := platform.searchPage(t, &customer.SearchProductsParams{Q: query("круассан")})
 
 	if got := productNames(page); !slices.Equal(got, []string{"Круассан с миндалём"}) {
 		t.Errorf("поиск нашёл %v, ожидали только круассан работающего заведения", got)
@@ -441,7 +415,7 @@ func TestSearchTreatsTheQueryAsTextAndNotAsAPattern(t *testing.T) {
 	platform.addProduct(t, restaurant, menuItem{Name: "Набор 50% миндаля", Price: 45000})
 	platform.addProduct(t, restaurant, menuItem{Name: "Набор 5090 грамм", Price: 39000})
 
-	page := platform.found(t, &customer.SearchProductsParams{Q: query("50%")})
+	page := platform.searchPage(t, &customer.SearchProductsParams{Q: query("50%")})
 
 	if got := productNames(page); !slices.Equal(got, []string{"Набор 50% миндаля"}) {
 		t.Errorf("по запросу «50%%» нашлось %v, ожидали только «Набор 50%% миндаля»", got)
@@ -458,7 +432,7 @@ func TestSearchWithoutQueryShowsTheWholeCatalog(t *testing.T) {
 	platform.addProduct(t, coffee, menuItem{Name: "Капучино", Price: 25000})
 
 	for _, params := range []*customer.SearchProductsParams{{}, {Q: query("")}} {
-		page := platform.found(t, params)
+		page := platform.searchPage(t, params)
 
 		got := productNames(page)
 		slices.Sort(got)
@@ -494,6 +468,20 @@ func TestSearchRefusesQueryLongerThanContractAllows(t *testing.T) {
 	}
 }
 
+// Предел длины относится к тому, что прислал клиент: обрезка пробелов — удобство
+// площадки, и прятать за ней превышение объявленного контрактом предела она не вправе.
+func TestSearchCountsTheQueryLengthAsTheClientSentItAndNotAsItWasTrimmed(t *testing.T) {
+	t.Parallel()
+
+	asked := strings.Repeat(" ", 20) + strings.Repeat("к", 190)
+
+	document := newPlatform(t).refusedSearch(t, &customer.SearchProductsParams{Q: query(asked)})
+
+	if document.Code != customer.ValidationFailed {
+		t.Errorf("код отказа %q, ожидали %q", document.Code, customer.ValidationFailed)
+	}
+}
+
 // Поиск по подстроке названия обычному B-tree не по зубам: подстрока может начинаться
 // где угодно, и без отдельного индекса каждый запрос читал бы каталог целиком. Миграция
 // заводит триграммный индекс, и поиск обязан идти через него — иначе на каталоге в
@@ -509,7 +497,7 @@ func TestSearchByNameGoesThroughTheTrigramIndexAndNotThroughTheWholeCatalog(t *t
 	platform.fillMenu(t, restaurant, catalogLargeEnoughToNeedAnIndex)
 	platform.addProduct(t, restaurant, menuItem{Name: "Круассан с миндалём", Price: 45000})
 
-	page := platform.found(t, &customer.SearchProductsParams{Q: query("круассан")})
+	page := platform.searchPage(t, &customer.SearchProductsParams{Q: query("круассан")})
 	if got := productNames(page); !slices.Equal(got, []string{"Круассан с миндалём"}) {
 		t.Fatalf("поиск нашёл %v, ожидали «Круассан с миндалём»", got)
 	}

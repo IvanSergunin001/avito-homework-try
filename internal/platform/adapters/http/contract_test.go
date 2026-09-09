@@ -25,3 +25,18 @@ func TestCatalogPageWindowMatchesTheContract(t *testing.T) {
 			window.Max, platformhttp.CustomerPageMax)
 	}
 }
+
+// TestSearchQueryLimitMatchesTheContract — та же сверка для предела длины подстроки `q`:
+// кодогенератор `maxLength` в тип не переносит, поэтому проверяет его площадка сама, и
+// без этого теста правка спецификации не уронила бы ничего.
+func TestSearchQueryLimitMatchesTheContract(t *testing.T) {
+	maxLength, err := spec.ReadSearchQueryMaxLength("../../../../api/customer/v1/bundle.yaml")
+	if err != nil {
+		t.Fatalf("прочитать предел длины подстроки из контракта: %v", err)
+	}
+
+	if maxLength != platformhttp.CustomerMaxSearchQuery {
+		t.Errorf("контракт обещает подстроку не длиннее %d знаков, площадка держит %d",
+			maxLength, platformhttp.CustomerMaxSearchQuery)
+	}
+}

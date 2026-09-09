@@ -30,8 +30,10 @@ const (
 	// CustomerPageMax — потолок страницы витрины, объявленный контрактом.
 	CustomerPageMax = 100
 
-	// customerMaxSearchQuery — предел длины поисковой подстроки из той же спецификации.
-	customerMaxSearchQuery = 200
+	// CustomerMaxSearchQuery — предел длины поисковой подстроки, объявленный контрактом.
+	// Сверяется со спецификацией тем же тестом, что и границы страницы: кодогенератор
+	// `maxLength` в тип не переносит, и разойтись с документом константа могла бы молча.
+	CustomerMaxSearchQuery = 200
 
 	// maxRequestBodyBytes — потолок на тело входящего запроса. Заказ — это список позиций
 	// корзины, и мегабайта ему хватает с запасом; всё, что больше, площадка не разбирает,
@@ -126,9 +128,7 @@ func (a customerAPI) GetRestaurant(
 	case errors.Is(err, domain.ErrRestaurantNotFound):
 		return customer_v1.GetRestaurant404ApplicationProblemPlusJSONResponse{
 			NotFoundApplicationProblemPlusJSONResponse: customer_v1.
-				NotFoundApplicationProblemPlusJSONResponse(customerProblem(
-					http.StatusNotFound, customer_v1.RestaurantNotFound, "Заведение не найдено",
-					"заведение не существует или больше не работает")),
+				NotFoundApplicationProblemPlusJSONResponse(restaurantNotFoundProblem()),
 		}, nil
 	case err != nil:
 		return nil, err
@@ -153,15 +153,13 @@ func (a customerAPI) ListRestaurantProducts(
 		}, nil
 	}
 
-	page, err := a.catalog.Menu(ctx, request.RestaurantId, search.nameContains, search.page)
+	page, err := a.catalog.Menu(ctx, request.RestaurantId, search.filter())
 
 	switch {
 	case errors.Is(err, domain.ErrRestaurantNotFound):
 		return customer_v1.ListRestaurantProducts404ApplicationProblemPlusJSONResponse{
 			NotFoundApplicationProblemPlusJSONResponse: customer_v1.
-				NotFoundApplicationProblemPlusJSONResponse(customerProblem(
-					http.StatusNotFound, customer_v1.RestaurantNotFound, "Заведение не найдено",
-					"заведение не существует или больше не работает")),
+				NotFoundApplicationProblemPlusJSONResponse(restaurantNotFoundProblem()),
 		}, nil
 	case err != nil:
 		return nil, err
@@ -185,7 +183,7 @@ func (a customerAPI) SearchProducts(
 		}, nil
 	}
 
-	page, err := a.catalog.Search(ctx, search.nameContains, search.page)
+	page, err := a.catalog.Search(ctx, search.filter())
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +240,11 @@ type productSearch struct {
 	page domain.Page
 }
 
+// filter — отбор выдачи в том виде, в каком его принимает каталог.
+func (s productSearch) filter() application.ProductFilter {
+	return application.ProductFilter{NameContains: s.nameContains, Page: s.page}
+}
+
 // resolveProductSearch разбирает параметры, общие у меню заведения и у поиска по всем
 // заведениям: окно выдачи и подстроку названия.
 //
@@ -255,18 +258,22 @@ func resolveProductSearch(query *customer_v1.SearchQuery, limit, offset *int) (p
 		return productSearch{}, err
 	}
 
-	var nameContains string
+	var asked string
 	if query != nil {
-		// Пробелы по краям — след ввода, а не часть искомого названия.
-		nameContains = strings.TrimSpace(*query)
+		asked = *query
 	}
+	// Предел проверяется до обрезки — по тому, что прислал клиент: контракт обещает
+	// `maxLength` для параметра запроса, а не для того, что от него осталось после
+	// нормализации, иначе строку длиннее объявленного площадка молча принимала бы.
 	// Предел объявлен в знаках, а не в байтах: в названиях кириллица, и байтовая длина
 	// обрезала бы русский запрос вдвое раньше объявленного.
-	if utf8.RuneCountInString(nameContains) > customerMaxSearchQuery {
-		return productSearch{}, fmt.Errorf("q: подстрока названия не длиннее %d знаков", customerMaxSearchQuery)
+	if utf8.RuneCountInString(asked) > CustomerMaxSearchQuery {
+		return productSearch{}, fmt.Errorf("q: подстрока названия не длиннее %d знаков", CustomerMaxSearchQuery)
 	}
 
-	return productSearch{nameContains: nameContains, page: page}, nil
+	// Пробелы по краям — след ввода, а не часть искомого названия; обрезка обещана
+	// описанием параметра в спецификации.
+	return productSearch{nameContains: strings.TrimSpace(asked), page: page}, nil
 }
 
 // productPage собирает страницу выдачи товаров в схеме клиентской спецификации.
@@ -321,6 +328,14 @@ func customerProblem(
 		Detail: &detail,
 		Code:   code,
 	}
+}
+
+// restaurantNotFoundProblem — отказ «заведения нет». Он одинаков у карточки заведения и у
+// его меню: обёртки ответов разные, а причина и текст, который читает человек, — одни, и
+// править их в двух местах значило бы однажды разойтись.
+func restaurantNotFoundProblem() customer_v1.ProblemBase {
+	return customerProblem(http.StatusNotFound, customer_v1.RestaurantNotFound,
+		"Заведение не найдено", "заведение не существует или больше не работает")
 }
 
 // customerValidationProblem собирает отказ по неверному запросу.

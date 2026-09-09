@@ -8,18 +8,26 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/platform/domain"
 )
 
-// ProductQuery — что спрашивают у каталога: подстрока названия, окно выдачи и, если поиск
-// сужен до одного заведения, его идентификатор.
-type ProductQuery struct {
-	// Restaurant — заведение, которым ограничена выдача. Пустой идентификатор означает
-	// «по всем заведениям»: искать блюдо, а не заведение, — самостоятельный сценарий, и
-	// идентификатора у него нет. Настоящий идентификатор пустым не бывает.
-	Restaurant uuid.UUID
+// ProductFilter — чем ограничена выдача товаров: подстрока названия и окно страницы.
+// Эти две вещи ездят вместе везде — от параметров запроса до хранилища, — и разбирать их
+// на части по дороге значило бы собирать обратно на каждом слое.
+type ProductFilter struct {
 	// NameContains — подстрока названия. Пустая означает «без отбора по названию»:
 	// отсутствие параметра и пустая строка для клиента одно и то же.
 	NameContains string
 	// Page — окно выдачи.
 	Page domain.Page
+}
+
+// ProductQuery — что спрашивают у каталога: отбор выдачи и, если она сужена до одного
+// заведения, его идентификатор.
+type ProductQuery struct {
+	// Restaurant — заведение, которым ограничена выдача; nil означает «по всем
+	// заведениям». Необязательность объявлена типом, а не условленным значением: искать
+	// блюдо, а не заведение, — самостоятельный сценарий, и отличать его от незаполненного
+	// поля должен компилятор, а не читатель.
+	Restaurant *uuid.UUID
+	ProductFilter
 }
 
 // ProductPage — окно выдачи товаров вместе с общим числом подошедших записей.
@@ -63,23 +71,17 @@ func NewCatalog(restaurants domain.Restaurants, products Products) *Catalog {
 // Работает ли заведение, проверяется до чтения меню: пустое меню закрытого заведения
 // неотличимо от пустого меню работающего, а покупателю нужно понять, что заведение
 // больше не работает, а не что у него кончились блюда.
-func (c *Catalog) Menu(
-	ctx context.Context, restaurant uuid.UUID, nameContains string, page domain.Page,
-) (ProductPage, error) {
+func (c *Catalog) Menu(ctx context.Context, restaurant uuid.UUID, filter ProductFilter) (ProductPage, error) {
 	if _, err := c.restaurants.FindWorking(ctx, restaurant); err != nil {
 		return ProductPage{}, err
 	}
 
-	return c.products.Search(ctx, ProductQuery{
-		Restaurant:   restaurant,
-		NameContains: nameContains,
-		Page:         page,
-	})
+	return c.products.Search(ctx, ProductQuery{Restaurant: &restaurant, ProductFilter: filter})
 }
 
 // Search ищет товар по названию по всем работающим заведениям сразу.
-func (c *Catalog) Search(ctx context.Context, nameContains string, page domain.Page) (ProductPage, error) {
-	return c.products.Search(ctx, ProductQuery{NameContains: nameContains, Page: page})
+func (c *Catalog) Search(ctx context.Context, filter ProductFilter) (ProductPage, error) {
+	return c.products.Search(ctx, ProductQuery{ProductFilter: filter})
 }
 
 // Product отдаёт карточку товара по идентификатору.

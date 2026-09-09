@@ -122,6 +122,37 @@ func asRefusal(t *testing.T, resp response, status int) problemDocument {
 	return document
 }
 
+// gotBody требует, чтобы площадка ответила тем ответом, которого тест ждал, и возвращает
+// его тело.
+//
+// Сгенерированный клиент разбирает каждый описанный контрактом ответ в своё поле, и
+// проверка «пришёл именно этот ответ» — это проверка, что поле не пустое. Проверка
+// одинакова у всех ручек, поэтому и живёт в одном месте: иначе каждая новая ручка
+// приносила бы ещё две-три её копии. `what` называет запрошенное, `expected` — ожидавшийся
+// ответ; вместе они говорят, что именно пошло не так, ещё до чтения тела.
+func gotBody[T any](t *testing.T, what, expected string, body *T, resp *http.Response, raw []byte) T {
+	t.Helper()
+
+	if body == nil {
+		t.Fatalf("%s: площадка ответила %d, ожидали %s: %s", what, resp.StatusCode, expected, raw)
+	}
+
+	return *body
+}
+
+// names — названия элементов страницы в том порядке, в каком их отдала площадка.
+//
+// Название достаётся функцией, а не полем: до поля через параметр типа Go добраться не
+// даёт, даже когда поле есть у всех подставляемых типов.
+func names[T any](items []T, name func(T) string) []string {
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		got = append(got, name(item))
+	}
+
+	return got
+}
+
 // post отправляет тело на площадку и возвращает прочитанный ответ.
 func (p *platform) post(t *testing.T, path string, body []byte) response {
 	t.Helper()
