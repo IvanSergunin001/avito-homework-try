@@ -142,6 +142,9 @@ type Order struct {
 	Items []OrderItem
 	// Total — сумма заказа, посчитанная площадкой по своему каталогу.
 	Total Money
+	// RequestHash — отпечаток запроса, которым заказ оформлен: по нему повтор отличается
+	// от переиспользования идентификатора заказа под другой заказ (см. idempotency.go).
+	RequestHash string
 	// CancelledBy — кто отменил заказ; у неотменённого пуст.
 	CancelledBy Actor
 	// CancellationReason — почему заказ отменён; у неотменённого пуста.
@@ -197,6 +200,7 @@ func PlaceOrder(
 		Address:      address,
 		Items:        slices.Clone(items),
 		Total:        total,
+		RequestHash:  requestHash(restaurantID, address, items),
 		CreatedAt:    at,
 		UpdatedAt:    at,
 	}, nil

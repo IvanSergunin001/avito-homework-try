@@ -13,7 +13,7 @@ import (
 )
 
 // orderColumns — поля заказа в том порядке, в каком их читает scanOrder.
-const orderColumns = `id, customer_id, restaurant_id, status, address, items, total,
+const orderColumns = `id, customer_id, restaurant_id, status, address, items, total, request_hash,
 	cancelled_by, cancellation_reason, created_at, updated_at`
 
 // Orders — заказы покупателей в схеме `platform`.
@@ -26,26 +26,68 @@ func NewOrders(db *sql.DB) *Orders {
 	return &Orders{db: db}
 }
 
-// Add записывает оформленный заказ.
-func (o *Orders) Add(ctx context.Context, order domain.Order) error {
+// Add записывает оформленный заказ, а если заказ с таким идентификатором уже есть —
+// отдаёт записанный.
+//
+// Занятый идентификатор отбивает сама вставка, а не проверка «нет ли уже такого» перед
+// ней: между проверкой и вставкой помещается второе нажатие «Заказать», и обе попытки
+// прошли бы проверку. Отдельной таблицы ключей идемпотентности здесь нет — ключ это
+// первичный ключ заказа, и уникальность строки и есть вся защита от повтора.
+//
+// Уже записанный заказ читается целиком и без отбора по покупателю: чей он и тем ли
+// запросом оформлен, решает предметная область, а запрос, который отобрал бы «только
+// свои», не отличил бы занятый чужой идентификатор от свободного.
+func (o *Orders) Add(ctx context.Context, order domain.Order) (domain.Order, bool, error) {
 	items, err := json.Marshal(storedItems(order.Items))
 	if err != nil {
-		return fmt.Errorf("собрать состав заказа %s: %w", order.ID, err)
+		return domain.Order{}, false, fmt.Errorf("собрать состав заказа %s: %w", order.ID, err)
 	}
 
-	_, err = o.db.ExecContext(ctx, `
+	result, err := o.db.ExecContext(ctx, `
 		INSERT INTO platform.orders
-			(id, customer_id, restaurant_id, status, address, items, total,
+			(id, customer_id, restaurant_id, status, address, items, total, request_hash,
 			 cancelled_by, cancellation_reason, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (id) DO NOTHING`,
 		order.ID, order.CustomerID, order.RestaurantID, string(order.Status), order.Address,
-		items, int64(order.Total), string(order.CancelledBy), order.CancellationReason,
+		items, int64(order.Total), order.RequestHash, string(order.CancelledBy), order.CancellationReason,
 		order.CreatedAt, order.UpdatedAt)
 	if err != nil {
-		return fmt.Errorf("записать заказ %s: %w", order.ID, err)
+		return domain.Order{}, false, fmt.Errorf("записать заказ %s: %w", order.ID, err)
 	}
 
-	return nil
+	placed, err := result.RowsAffected()
+	if err != nil {
+		return domain.Order{}, false, fmt.Errorf("записать заказ %s: %w", order.ID, err)
+	}
+	if placed == 1 {
+		return order, true, nil
+	}
+
+	existing, err := o.find(ctx, order.ID)
+	if err != nil {
+		return domain.Order{}, false, err
+	}
+
+	return existing, false, nil
+}
+
+// find отдаёт заказ по одному лишь идентификатору — тем ключом, который занят. Читать так
+// заказ можно только здесь: всё остальное спрашивает заказ вместе с его покупателем.
+func (o *Orders) find(ctx context.Context, id uuid.UUID) (domain.Order, error) {
+	row := o.db.QueryRowContext(ctx, `SELECT `+orderColumns+` FROM platform.orders WHERE id = $1`, id)
+
+	order, err := scanOrder(row)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// Строки нет, хотя вставка на неё же и наткнулась: заказы не удаляются, поэтому
+		// это не «заказ не найден», а рассогласование, о котором надо знать.
+		return domain.Order{}, fmt.Errorf("заказ %s занял идентификатор и исчез: %w", id, err)
+	case err != nil:
+		return domain.Order{}, fmt.Errorf("прочитать заказ %s: %w", id, err)
+	}
+
+	return order, nil
 }
 
 // SaveStatus записывает новое состояние заказа.
@@ -136,7 +178,8 @@ func scanOrder(row rowScanner) (domain.Order, error) {
 	)
 
 	err := row.Scan(&order.ID, &order.CustomerID, &order.RestaurantID, &status, &order.Address,
-		&items, &total, &cancelledBy, &order.CancellationReason, &order.CreatedAt, &order.UpdatedAt)
+		&items, &total, &order.RequestHash, &cancelledBy, &order.CancellationReason,
+		&order.CreatedAt, &order.UpdatedAt)
 	if err != nil {
 		return domain.Order{}, err
 	}

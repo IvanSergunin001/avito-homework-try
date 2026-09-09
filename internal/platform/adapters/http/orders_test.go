@@ -89,7 +89,16 @@ func (b *box) acceptOrder(w http.ResponseWriter, r *http.Request) {
 
 	b.mu.Lock()
 	b.deliveries = append(b.deliveries, arrived)
+	refusal := b.refusal
 	b.mu.Unlock()
+
+	// Отказ отдаётся после того, как доставка записана: заказ до заведения доехал, и тест
+	// вправе смотреть, каким он приехал, даже когда заведение его не взяло.
+	if refusal != nil {
+		refusal.write(w)
+
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

@@ -2,14 +2,15 @@
 // площадка вызывает, а не реализует.
 //
 // Запрос собирается сгенерированным по контракту построителем — заголовки идемпотентности
-// и путь операции берутся из спецификации, а не пишутся здесь руками. Ответ разбирать
-// нечем: заведение подтверждает им то, что площадка и так знает, — принят ли заказ, видно
-// по коду ответа.
+// и путь операции берутся из спецификации, а не пишутся здесь руками. Принят заказ или
+// нет, видно по коду ответа; тело разбирается только у отказа — в нём заведение называет
+// причину, из-за которой заказ не взяли, и покупателю решать по ней, что делать дальше.
 
 package restaurant_client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,11 +27,12 @@ import (
 // maxAcceptanceResponseBytes — сколько байт ответа заведения площадка готова прочитать,
 // прежде чем закрыть соединение.
 //
-// Подтверждение приёма — это идентификатор заказа и время: килобайта хватает с запасом.
-// Читается оно только затем, чтобы соединение вернулось в пул переиспользуемых, а не
-// обрывалось после каждого заказа; заведение, отдающее в ответ мегабайты, площадку это
-// делать не заставит.
-const maxAcceptanceResponseBytes = 1 << 10
+// Подтверждение приёма — это идентификатор заказа и время, отказ — причина, позиция и
+// цена: нескольких килобайт хватает и тому и другому с запасом. Читается ответ и ради
+// разбора отказа, и ради того, чтобы соединение вернулось в пул переиспользуемых, а не
+// обрывалось после каждого заказа; заведение, отдающее в ответ мегабайты, площадку читать
+// их не заставит.
+const maxAcceptanceResponseBytes = 4 << 10
 
 // OrderIntake передаёт заказ заведению и ждёт его синхронного решения.
 //
@@ -73,25 +75,91 @@ func (i *OrderIntake) Accept(
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	// Тело успешного ответа площадке не нужно, но прочитать его стоит: закрытое
-	// недочитанным соединение в пул не возвращается, и каждый заказ открывал бы к
-	// заведению новое.
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxAcceptanceResponseBytes))
+	// Тело читается всегда, даже когда разбирать в нём нечего: закрытое недочитанным
+	// соединение в пул не возвращается, и каждый заказ открывал бы к заведению новое.
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxAcceptanceResponseBytes))
+	if err != nil {
+		return application.RestaurantUnavailableError{TimedOut: timedOut(err), Err: err}
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
 
 	// Принят заказ или нет, видно по коду ответа: `201` — заказ заведён, `200` — заведение
 	// уже принимало его раньше и отвечает результатом первой попытки.
-	//
-	// Всё остальное для площадки одинаково: заказ не принят, и покупатель узнаёт об этом
-	// сразу. Разбор машиночитаемых причин отказа — «позиция кончилась», «цена
-	// изменилась» — это следующий слайс; заводить его половину здесь значило бы показать
-	// покупателю причину, по которой он ничего не может сделать.
-	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
-		return application.RestaurantUnavailableError{
-			Err: fmt.Errorf("заведение ответило на переданный заказ %d", response.StatusCode),
-		}
+	if response.StatusCode == http.StatusCreated || response.StatusCode == http.StatusOK {
+		return nil
 	}
 
-	return nil
+	// Заказ не принят. Если заведение назвало причину по контракту, она уезжает
+	// покупателю: по ней он и решает, что делать дальше — заменить позицию, согласиться
+	// на новую цену или уйти в другое заведение.
+	if refusal, refused := refusalOf(response.StatusCode, body); refused {
+		return refusal
+	}
+
+	// Причины нет: заведение ответило не по контракту. Для покупателя это то же самое,
+	// что молчание, — выбрать по такому ответу ему нечего.
+	return application.RestaurantUnavailableError{
+		Err: fmt.Errorf("заведение ответило на переданный заказ %d", response.StatusCode),
+	}
+}
+
+// refusalOf разбирает ответ заведения как отказ по правилам предметной области.
+//
+// Отказ — это `409` с машиночитаемой причиной из закрытого перечня контракта, и ничего
+// больше: код ответа и код причины проверяются оба. `409` без разбираемого тела, с
+// причиной не из перечня или с причиной, которая к приёму заказа отношения не имеет
+// (скажем, «заказ уже нельзя отменить»), — это заведение, разошедшееся с контрактом, и
+// выдавать его ответ покупателю за объяснение отказа нельзя.
+func refusalOf(status int, body []byte) (application.RestaurantRefusalError, bool) {
+	if status != http.StatusConflict {
+		return application.RestaurantRefusalError{}, false
+	}
+
+	var document partner.Problem
+	if err := json.Unmarshal(body, &document); err != nil {
+		return application.RestaurantRefusalError{}, false
+	}
+
+	reason, described := refusalReason(document.Code)
+	if !described {
+		return application.RestaurantRefusalError{}, false
+	}
+
+	refusal := application.RestaurantRefusalError{Reason: reason}
+	if document.ProductExternalId != nil {
+		refusal.ProductExternalID = *document.ProductExternalId
+	}
+	if document.CurrentPrice != nil {
+		refusal.CurrentPrice = domain.Money(*document.CurrentPrice)
+	}
+	if document.Detail != nil {
+		refusal.Detail = *document.Detail
+	}
+
+	return refusal, true
+}
+
+// refusalReason переводит код причины партнёрского контракта в причину предметной области
+// площадки.
+//
+// Перевод явный, а не приведением строки: перечень кодов контракта закрыт, и причина,
+// которой в нём нет, — это не новая причина, а разошедшееся с контрактом заведение.
+// Коды, которыми контракт отвечает на что угодно, кроме приёма заказа, сюда не попадают
+// намеренно: отказ в приёме заказа объясняется только тем, что заведение не может его
+// выполнить.
+func refusalReason(code partner.ProblemCode) (domain.RefusalReason, bool) {
+	switch code {
+	case partner.OutOfStock:
+		return domain.OutOfStock, true
+	case partner.PriceChanged:
+		return domain.PriceChanged, true
+	case partner.UnknownProduct:
+		return domain.UnknownProduct, true
+	case partner.RestaurantClosed:
+		return domain.RestaurantClosed, true
+	default:
+		return "", false
+	}
 }
 
 // incomingOrder переводит заказ в схему партнёрского контракта.
