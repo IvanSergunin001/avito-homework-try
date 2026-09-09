@@ -89,6 +89,23 @@ services:
       # принимало заказы в любое время суток.
       RESTAURANT_OPEN_FROM: ${RESTAURANT_OPEN_FROM:-00:00}
       RESTAURANT_OPEN_UNTIL: ${RESTAURANT_OPEN_UNTIL:-00:00}
+      # Куда и чем коробка сообщает о смене статуса заказа. Адрес — имя службы площадки в
+      # сети Compose; ключ — партнёрский ключ демонстрационного заведения, тот самый, чей
+      # хеш кладёт в базу площадки seed-миграция. Он известен всем, кто открывал
+      # репозиторий, и годится только для демонстрации.
+      RESTAURANT_PLATFORM_BASE_URL: ${RESTAURANT_PLATFORM_BASE_URL:-http://platform:8080}
+      RESTAURANT_PARTNER_KEY: ${RESTAURANT_PARTNER_KEY:-pk_DEMOKEYDEMOKEYDEMOKEYDEMOK}
+      # Как часто коробка развозит накопившиеся уведомления, сколько ждёт ответа площадки,
+      # сколько раз повторяет недоставленное и какова пауза перед первым повтором.
+      RESTAURANT_NOTIFY_INTERVAL: ${RESTAURANT_NOTIFY_INTERVAL:-1s}
+      RESTAURANT_NOTIFY_TIMEOUT: ${RESTAURANT_NOTIFY_TIMEOUT:-5s}
+      RESTAURANT_NOTIFY_MAX_ATTEMPTS: ${RESTAURANT_NOTIFY_MAX_ATTEMPTS:-3}
+      RESTAURANT_NOTIFY_RETRY_DELAY: ${RESTAURANT_NOTIFY_RETRY_DELAY:-2s}
+      # Продвижение статусов по таймеру: им демонстрируется путь покупателя целиком, без
+      # переключения на рабочее место оператора. По умолчанию выключено — статусы двигает
+      # оператор.
+      RESTAURANT_AUTO_ADVANCE_ORDERS: ${RESTAURANT_AUTO_ADVANCE_ORDERS:-false}
+      RESTAURANT_AUTO_ADVANCE_INTERVAL: ${RESTAURANT_AUTO_ADVANCE_INTERVAL:-15s}
       # Коробка подключается к уже накатанной базе: мигрирует отдельный шаг выше.
       # Схема у неё своя (`restaurant`), инстанс общий с площадкой — экономия на
       # инфраструктуре демо, в эксплуатации у заведения свой.

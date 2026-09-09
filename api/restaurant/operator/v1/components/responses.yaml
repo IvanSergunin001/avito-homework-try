@@ -16,3 +16,13 @@ Conflict:
     application/problem+json:
       schema:
         $ref: '../../../../common/v1/components/schemas.yaml#/ProblemBase'
+
+TransitionNotAllowed:
+  description: |
+    Заказ отсюда в это состояние не переходит: `code` = `transition_not_allowed`.
+    В `detail` — обе стороны перехода, которого потребовали: по ним оператор видит,
+    в каком состоянии заказ на самом деле.
+  content:
+    application/problem+json:
+      schema:
+        $ref: '../../../../common/v1/components/schemas.yaml#/ProblemBase'

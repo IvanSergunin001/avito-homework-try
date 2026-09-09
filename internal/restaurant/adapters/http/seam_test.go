@@ -23,7 +23,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
 	"github.com/IvanSergunin001/Test157/internal/pkg/testdb"
@@ -49,6 +52,33 @@ type box struct {
 	srv *httptest.Server
 	// db — база коробки, своя у каждого теста и с накатанными миграциями.
 	db *testdb.DB
+	// platform — площадка по ту сторону контракта: HTTP-приёмник уведомлений о смене
+	// статуса. Настоящая площадка сюда не поднимается — коробка обязана разговаривать с
+	// ней по контракту, и проверяется именно это.
+	platform *platformStub
+	// background — фоновые работы коробки: доставка уведомлений и автопилот. Тест ведёт
+	// их сам, называя момент, а не ждёт срабатывания таймера: ожидание тика проверяло бы
+	// планировщик Go, а сдвиг времени вперёд — правило, по которому назначается повтор.
+	background restauranthttp.Background
+	// log — то, что коробка написала в лог. По нему видно то, что не видно в ответах:
+	// например, что попытки доставки уведомления кончились.
+	log *logSink
+}
+
+// retryBaseDelay — пауза перед первым повтором доставки у коробки, поднятой тестом.
+// Каждая следующая вдвое длиннее; тест не ждёт этих пауз, а называет момент сам.
+const retryBaseDelay = time.Second
+
+// retryAttempts — сколько попыток доставки делает коробка, поднятая тестом.
+const retryAttempts = 3
+
+// boxOptions — чем коробка теста отличается от обычной. Нулевое значение — обычная:
+// круглосуточная, со стоящим автопилотом.
+type boxOptions struct {
+	// hours — часы работы заведения.
+	hours domain.WorkingHours
+	// autoAdvance — двигать ли статусы по таймеру.
+	autoAdvance bool
 }
 
 // newBox поднимает коробку по её шву. Готовить окружение перед прогоном не нужно: базу
@@ -59,21 +89,79 @@ type box struct {
 func newBox(t *testing.T) *box {
 	t.Helper()
 
-	return openBox(t, domain.AllDay())
+	return startBox(t, boxOptions{})
 }
 
 // openBox поднимает коробку с заданными часами работы.
 func openBox(t *testing.T, hours domain.WorkingHours) *box {
 	t.Helper()
 
-	db := testdb.New(t)
+	return startBox(t, boxOptions{hours: hours})
+}
 
-	// Логи службы в тестах никому не нужны, но middleware, которое их пишет, остаётся
-	// на месте: шов проверяется вместе со всей обвязкой, а не в обход неё.
-	srv := httptest.NewServer(restauranthttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB, hours))
+// boxOnAutopilot поднимает коробку с включённым продвижением статусов по таймеру.
+func boxOnAutopilot(t *testing.T) *box {
+	t.Helper()
+
+	return startBox(t, boxOptions{autoAdvance: true})
+}
+
+// startBox поднимает коробку вместе с площадкой-приёмником уведомлений.
+func startBox(t *testing.T, options boxOptions) *box {
+	t.Helper()
+
+	db := testdb.New(t)
+	platform := newPlatformStub(t)
+
+	retry, err := domain.NewRetryPolicy(retryAttempts, retryBaseDelay)
+	if err != nil {
+		t.Fatalf("собрать правило повторов: %v", err)
+	}
+
+	// Логи службы читает тест, но middleware, которое их пишет, остаётся на месте: шов
+	// проверяется вместе со всей обвязкой, а не в обход неё.
+	sink := &logSink{}
+	router, background := restauranthttp.NewRouter(
+		logger.New(sink, slog.LevelInfo), db.DB, restauranthttp.Settings{
+			Hours: options.hours,
+			Platform: restauranthttp.PlatformLink{
+				BaseURL:    platform.srv.URL,
+				PartnerKey: partnerKey,
+				Timeout:    waitForPlatform,
+			},
+			Retry:       retry,
+			AutoAdvance: options.autoAdvance,
+		})
+
+	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
-	return &box{srv: srv, db: db}
+	return &box{srv: srv, db: db, platform: platform, background: background, log: sink}
+}
+
+// logSink — лог коробки, прочитанный тестом.
+//
+// Пишут в него и обработчики запросов, и фоновая доставка — из разных горутин, поэтому
+// запись под замком: иначе тест ловил бы гонку вместо правила, которое проверяет.
+type logSink struct {
+	mu      sync.Mutex
+	written strings.Builder
+}
+
+// Write принимает очередную запись лога.
+func (s *logSink) Write(record []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.written.Write(record)
+}
+
+// String отдаёт всё, что коробка написала в лог к этому моменту.
+func (s *logSink) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.written.String()
 }
 
 // response — ответ службы, прочитанный целиком. Тестам нужны код, тип содержимого и тело;

@@ -367,3 +367,120 @@ func TestConfirmedOrderIsNoLongerRejectedAtReview(t *testing.T) {
 		t.Errorf("подтверждённый заказ отклонён на этапе рассмотрения (%v), а он уже в работе", err)
 	}
 }
+
+// inWork — заказ, за который оператор взялся: отсюда начинается его путь по кухне.
+func inWork(t *testing.T) domain.Order {
+	t.Helper()
+
+	order := underReview(t)
+	if err := order.Confirm(); err != nil {
+		t.Fatalf("подтверждение не прошло: %v", err)
+	}
+
+	return order
+}
+
+// transitionFrom разбирает ошибку как отказ перехода.
+func transitionFrom(t *testing.T, err error) domain.OrderTransitionError {
+	t.Helper()
+
+	var refusal domain.OrderTransitionError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("ожидали отказ перехода, получили %v", err)
+	}
+
+	return refusal
+}
+
+func TestOrderGoesFromCookingThroughDeliveryToCompletion(t *testing.T) {
+	t.Parallel()
+
+	order := inWork(t)
+
+	for _, next := range []domain.OrderStatus{domain.Cooking, domain.Delivering, domain.Completed} {
+		if err := order.Advance(next); err != nil {
+			t.Fatalf("заказ не перешёл в %q: %v", next, err)
+		}
+		if order.Status != next {
+			t.Fatalf("статус заказа %q, ожидали %q", order.Status, next)
+		}
+	}
+}
+
+func TestOrderDoesNotSkipCookingOnItsWayToDelivery(t *testing.T) {
+	t.Parallel()
+
+	order := inWork(t)
+
+	refusal := transitionFrom(t, order.Advance(domain.Delivering))
+	if refusal.From != domain.Confirmed || refusal.To != domain.Delivering {
+		t.Errorf("отказ описывает переход %q → %q, ожидали confirmed → delivering: оператору нужно видеть,"+
+			" где заказ на самом деле", refusal.From, refusal.To)
+	}
+	if order.Status != domain.Confirmed {
+		t.Errorf("статус заказа %q, ожидали confirmed: несостоявшийся переход ничего не меняет", order.Status)
+	}
+}
+
+func TestOrderIsNotCookedBeforeTheOperatorTookIt(t *testing.T) {
+	t.Parallel()
+
+	order := underReview(t)
+
+	if err := order.Advance(domain.Cooking); err == nil {
+		t.Error("заказ ушёл в готовку, минуя решение оператора: заведение готовит то, за что не бралось")
+	}
+}
+
+func TestCompletedOrderIsTheEndOfTheRoad(t *testing.T) {
+	t.Parallel()
+
+	order := inWork(t)
+	for _, next := range []domain.OrderStatus{domain.Cooking, domain.Delivering, domain.Completed} {
+		if err := order.Advance(next); err != nil {
+			t.Fatalf("заказ не перешёл в %q: %v", next, err)
+		}
+	}
+
+	if _, ok := order.Next(); ok {
+		t.Error("у доставленного заказа нашёлся следующий шаг, а его путь пройден")
+	}
+	if err := order.Advance(domain.Cooking); err == nil {
+		t.Error("доставленный заказ вернулся на кухню")
+	}
+}
+
+func TestCancelledOrderIsNotMovedAnyFurther(t *testing.T) {
+	t.Parallel()
+
+	order := underReview(t)
+	if err := order.Reject("Закончились продукты"); err != nil {
+		t.Fatalf("отказ не прошёл: %v", err)
+	}
+
+	if _, ok := order.Next(); ok {
+		t.Error("у отменённого заказа нашёлся следующий шаг: отмена — обрыв пути, а не ступень")
+	}
+	if err := order.Advance(domain.Cooking); err == nil {
+		t.Error("отменённый заказ ушёл в готовку: заведение готовит то, от чего отказалось")
+	}
+}
+
+func TestEveryStatusOnTheWayIsCountedAsStillInWork(t *testing.T) {
+	t.Parallel()
+
+	statuses := domain.StatusesInWork()
+
+	expected := map[domain.OrderStatus]bool{
+		domain.UnderReview: true, domain.Confirmed: true,
+		domain.Cooking: true, domain.Delivering: true,
+	}
+	if len(statuses) != len(expected) {
+		t.Fatalf("в работе %v, ожидали четыре незавершённых состояния", statuses)
+	}
+	for _, status := range statuses {
+		if !expected[status] {
+			t.Errorf("состояние %q названо незавершённым, а двигать его дальше некуда", status)
+		}
+	}
+}

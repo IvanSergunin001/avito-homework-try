@@ -149,13 +149,13 @@ func refusalOf(status int, body []byte) (application.RestaurantRefusalError, boo
 // выполнить.
 func refusalReason(code partner.ProblemCode) (domain.RefusalReason, bool) {
 	switch code {
-	case partner.OutOfStock:
+	case partner.ProblemCodeOutOfStock:
 		return domain.OutOfStock, true
-	case partner.PriceChanged:
+	case partner.ProblemCodePriceChanged:
 		return domain.PriceChanged, true
-	case partner.UnknownProduct:
+	case partner.ProblemCodeUnknownProduct:
 		return domain.UnknownProduct, true
-	case partner.RestaurantClosed:
+	case partner.ProblemCodeRestaurantClosed:
 		return domain.RestaurantClosed, true
 	default:
 		return "", false

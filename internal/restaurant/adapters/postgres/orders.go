@@ -133,11 +133,47 @@ func (o *Orders) Page(ctx context.Context, window application.Window) (applicati
 	return application.OrderPage{Items: orders, Total: total}, nil
 }
 
-// Confirm применяет к заказу решение оператора взяться за него.
-func (o *Orders) Confirm(
+// Advance применяет к заказу решение оператора двигать его дальше по пути.
+func (o *Orders) Advance(
 	ctx context.Context, id uuid.UUID, decide func(order *domain.Order) error,
 ) (domain.Order, error) {
 	return o.review(ctx, id, decide, keepStock)
+}
+
+// InWork перечисляет заказы, которые ещё не пришли в конечное состояние.
+//
+// Отдаются одни идентификаторы, а не заказы целиком: продвигающий их читает каждый заказ
+// заново под блокировкой — состояние, прочитанное списком, к моменту решения уже могло
+// смениться на соседнем рабочем месте.
+func (o *Orders) InWork(ctx context.Context, statuses []domain.OrderStatus) ([]uuid.UUID, error) {
+	names := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		names = append(names, string(status))
+	}
+
+	rows, err := o.db.QueryContext(ctx, `
+		SELECT id
+		FROM restaurant.orders
+		WHERE status = ANY($1::text[])
+		ORDER BY accepted_at, id`, names)
+	if err != nil {
+		return nil, fmt.Errorf("перечислить заказы в работе: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("прочитать заказ в работе: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("перебрать заказы в работе: %w", err)
+	}
+
+	return ids, nil
 }
 
 // Reject применяет к заказу отказ оператора.
@@ -156,6 +192,12 @@ func (o *Orders) Reject(
 //
 // settle распоряжается остатками: за подтверждённый заказ они уже списаны, а отклонённый
 // их возвращает.
+//
+// Той же транзакцией уведомление о новом состоянии кладётся в очередь площадке. Не
+// «после записи, отдельным шагом»: между записью и отдельным шагом помещается падение
+// службы, и заказ уехал бы в доставку, о которой площадка не узнает никогда. Одной
+// транзакцией — значит, либо статус сменился и уведомление поставлено в очередь, либо не
+// произошло ни того, ни другого.
 func (o *Orders) review(
 	ctx context.Context,
 	id uuid.UUID,
@@ -193,11 +235,37 @@ func (o *Orders) review(
 		return domain.Order{}, err
 	}
 
+	if err := enqueueNotification(ctx, tx, order); err != nil {
+		return domain.Order{}, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return domain.Order{}, fmt.Errorf("применить решение по заказу %s: %w", id, err)
 	}
 
 	return order, nil
+}
+
+// enqueueNotification кладёт уведомление о новом состоянии заказа в очередь площадке.
+//
+// Время перехода ставит база, а не вызывающий: `now()` внутри транзакции — это момент её
+// начала, то есть ровно то время, которым отмечена сама смена статуса. Ехать уведомление
+// может сразу: пауза появляется только у того, которое не доехало.
+//
+// Повтор отбивается ключом «заказ + статус»: в каждое состояние заказ приходит один раз,
+// и вторая строка о том же переходе означала бы второе уведомление о нём же.
+func enqueueNotification(ctx context.Context, tx *sql.Tx, order domain.Order) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO restaurant.status_notifications
+			(order_id, status, reason, occurred_at, next_attempt_at)
+		VALUES ($1, $2, $3, now(), now())
+		ON CONFLICT (order_id, status) DO NOTHING`,
+		order.ID, string(order.Status), order.CancellationReason)
+	if err != nil {
+		return fmt.Errorf("поставить уведомление о заказе %s в очередь: %w", order.ID, err)
+	}
+
+	return nil
 }
 
 // acceptedEarlier читает заказ, который под этим ключом приняли раньше.

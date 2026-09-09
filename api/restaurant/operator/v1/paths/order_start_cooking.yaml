@@ -1,0 +1,27 @@
+post:
+  operationId: startCooking
+  summary: Отправить заказ в готовку
+  description: |
+    Оператор берёт подтверждённый заказ в работу: на кухне начали готовить. Площадка
+    узнаёт об этом уведомлением и показывает статус покупателю.
+
+    Отправить в готовку можно только подтверждённый заказ: путь заказа идёт в одну
+    сторону, и перепрыгнуть ступень нельзя — заказ, который ещё не подтверждён или уже
+    уехал, отвечает `409`.
+  tags:
+    - orders
+  parameters:
+    - $ref: '../components/parameters.yaml#/OrderId'
+  responses:
+    '200':
+      description: Заказ готовится.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/Order'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../components/responses.yaml#/OrderNotFound'
+    '409':
+      $ref: '../components/responses.yaml#/TransitionNotAllowed'

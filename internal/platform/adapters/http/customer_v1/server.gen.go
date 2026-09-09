@@ -87,6 +87,7 @@ const (
 	RestaurantClosed      ProblemCode = "restaurant_closed"
 	RestaurantNotFound    ProblemCode = "restaurant_not_found"
 	RestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	TransitionNotAllowed  ProblemCode = "transition_not_allowed"
 	Unauthorized          ProblemCode = "unauthorized"
 	UnknownProduct        ProblemCode = "unknown_product"
 	ValidationFailed      ProblemCode = "validation_failed"
@@ -122,6 +123,8 @@ func (e ProblemCode) Valid() bool {
 	case RestaurantNotFound:
 		return true
 	case RestaurantUnavailable:
+		return true
+	case TransitionNotAllowed:
 		return true
 	case Unauthorized:
 		return true

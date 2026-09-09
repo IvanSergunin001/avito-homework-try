@@ -17,7 +17,10 @@ import (
 // Defines values for OrderStatus.
 const (
 	Cancelled   OrderStatus = "cancelled"
+	Completed   OrderStatus = "completed"
 	Confirmed   OrderStatus = "confirmed"
+	Cooking     OrderStatus = "cooking"
+	Delivering  OrderStatus = "delivering"
 	UnderReview OrderStatus = "under_review"
 )
 
@@ -26,7 +29,13 @@ func (e OrderStatus) Valid() bool {
 	switch e {
 	case Cancelled:
 		return true
+	case Completed:
+		return true
 	case Confirmed:
+		return true
+	case Cooking:
+		return true
+	case Delivering:
 		return true
 	case UnderReview:
 		return true
@@ -51,6 +60,7 @@ const (
 	ProblemCodeRestaurantClosed      ProblemCode = "restaurant_closed"
 	ProblemCodeRestaurantNotFound    ProblemCode = "restaurant_not_found"
 	ProblemCodeRestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	ProblemCodeTransitionNotAllowed  ProblemCode = "transition_not_allowed"
 	ProblemCodeUnauthorized          ProblemCode = "unauthorized"
 	ProblemCodeUnknownProduct        ProblemCode = "unknown_product"
 	ProblemCodeValidationFailed      ProblemCode = "validation_failed"
@@ -86,6 +96,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeRestaurantNotFound:
 		return true
 	case ProblemCodeRestaurantUnavailable:
+		return true
+	case ProblemCodeTransitionNotAllowed:
 		return true
 	case ProblemCodeUnauthorized:
 		return true
@@ -226,8 +238,12 @@ type Order struct {
 	PlatformOrderId openapi_types.UUID `json:"platform_order_id"`
 
 	// Status Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
-	// ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
-	// отклонил его на этапе рассмотрения.
+	// ждёт решения оператора; `confirmed` — оператор взялся за него; `cooking` — заказ
+	// готовится; `delivering` — уехал к покупателю; `completed` — доставлен; `cancelled` —
+	// оператор отклонил его на этапе рассмотрения.
+	//
+	// Путь заказа идёт в одну сторону: `under_review` → `confirmed` → `cooking` →
+	// `delivering` → `completed`. `completed` и `cancelled` конечны — переходов из них нет.
 	//
 	// Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
 	// о котором коробка сообщает площадке, и заводить для одного состояния два названия
@@ -276,8 +292,12 @@ type OrderPage struct {
 }
 
 // OrderStatus Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
-// ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
-// отклонил его на этапе рассмотрения.
+// ждёт решения оператора; `confirmed` — оператор взялся за него; `cooking` — заказ
+// готовится; `delivering` — уехал к покупателю; `completed` — доставлен; `cancelled` —
+// оператор отклонил его на этапе рассмотрения.
+//
+// Путь заказа идёт в одну сторону: `under_review` → `confirmed` → `cooking` →
+// `delivering` → `completed`. `completed` и `cancelled` конечны — переходов из них нет.
 //
 // Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
 // о котором коробка сообщает площадке, и заводить для одного состояния два названия
@@ -418,6 +438,11 @@ type NotFound = ProblemBase
 // Своё поле API добавляет к этой основе через `allOf`.
 type OrderNotFound = ProblemBase
 
+// TransitionNotAllowed Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type TransitionNotAllowed = ProblemBase
+
 // ListMenuItemsParams defines parameters for ListMenuItems.
 type ListMenuItemsParams struct {
 	// Limit Размер страницы. По умолчанию 20, больше 100 за раз коробка не отдаёт.
@@ -474,12 +499,21 @@ type ServerInterface interface {
 	// ListOrders Входящие заказы
 	// (GET /orders)
 	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+	// CompleteOrder Завершить заказ
+	// (POST /orders/{orderId}/complete)
+	CompleteOrder(w http.ResponseWriter, r *http.Request, orderId OrderId)
 	// ConfirmOrder Подтвердить заказ
 	// (POST /orders/{orderId}/confirm)
 	ConfirmOrder(w http.ResponseWriter, r *http.Request, orderId OrderId)
 	// RejectOrder Отклонить заказ на этапе рассмотрения
 	// (POST /orders/{orderId}/reject)
 	RejectOrder(w http.ResponseWriter, r *http.Request, orderId OrderId)
+	// StartCooking Отправить заказ в готовку
+	// (POST /orders/{orderId}/start-cooking)
+	StartCooking(w http.ResponseWriter, r *http.Request, orderId OrderId)
+	// StartDelivery Отправить заказ в доставку
+	// (POST /orders/{orderId}/start-delivery)
+	StartDelivery(w http.ResponseWriter, r *http.Request, orderId OrderId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -528,6 +562,12 @@ func (_ Unimplemented) ListOrders(w http.ResponseWriter, r *http.Request, params
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// CompleteOrder Завершить заказ
+// (POST /orders/{orderId}/complete)
+func (_ Unimplemented) CompleteOrder(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ConfirmOrder Подтвердить заказ
 // (POST /orders/{orderId}/confirm)
 func (_ Unimplemented) ConfirmOrder(w http.ResponseWriter, r *http.Request, orderId OrderId) {
@@ -537,6 +577,18 @@ func (_ Unimplemented) ConfirmOrder(w http.ResponseWriter, r *http.Request, orde
 // RejectOrder Отклонить заказ на этапе рассмотрения
 // (POST /orders/{orderId}/reject)
 func (_ Unimplemented) RejectOrder(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartCooking Отправить заказ в готовку
+// (POST /orders/{orderId}/start-cooking)
+func (_ Unimplemented) StartCooking(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartDelivery Отправить заказ в доставку
+// (POST /orders/{orderId}/start-delivery)
+func (_ Unimplemented) StartDelivery(w http.ResponseWriter, r *http.Request, orderId OrderId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -759,6 +811,32 @@ func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteOrder operation middleware
+func (siw *ServerInterfaceWrapper) CompleteOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orderId" -------------
+	var orderId OrderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orderId", chi.URLParam(r, "orderId"), &orderId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orderId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteOrder(w, r, orderId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ConfirmOrder operation middleware
 func (siw *ServerInterfaceWrapper) ConfirmOrder(w http.ResponseWriter, r *http.Request) {
 
@@ -802,6 +880,58 @@ func (siw *ServerInterfaceWrapper) RejectOrder(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RejectOrder(w, r, orderId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCooking operation middleware
+func (siw *ServerInterfaceWrapper) StartCooking(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orderId" -------------
+	var orderId OrderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orderId", chi.URLParam(r, "orderId"), &orderId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orderId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCooking(w, r, orderId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartDelivery operation middleware
+func (siw *ServerInterfaceWrapper) StartDelivery(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orderId" -------------
+	var orderId OrderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orderId", chi.URLParam(r, "orderId"), &orderId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orderId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartDelivery(w, r, orderId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -950,6 +1080,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/orders/{orderId}/reject", wrapper.RejectOrder)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{orderId}/start-cooking", wrapper.StartCooking)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{orderId}/start-delivery", wrapper.StartDelivery)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{orderId}/complete", wrapper.CompleteOrder)
 	})
 
 	return r
