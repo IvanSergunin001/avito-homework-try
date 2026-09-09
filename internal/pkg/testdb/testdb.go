@@ -10,6 +10,11 @@
 //	                                                 напечатать строку подключения, чтобы
 //	                                                 заглянуть в данные после прогона.
 //
+// Строку подключения пишут в терминах машины, на которой её пишут: `localhost:5432` —
+// это база, поднятая рядом. Когда тесты идут внутри контейнера (`make test`), `localhost`
+// означал бы сам контейнер, поэтому оснастка подменяет его адресом хоста Docker и обратно
+// — в том, что печатает человеку. Адрес приезжает в TESTCONTAINERS_HOST_OVERRIDE.
+//
 // Вывод прошедшего пакета `go test` без `-v` глотает целиком, поэтому в режиме
 // TEST_KEEP_DB строку подключения видно только с `-v`: `make test` добавляет флаг сам,
 // когда переменная выставлена.
@@ -24,6 +29,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -46,6 +52,11 @@ const (
 	// KeepEnv — переменная, оставляющая базу после прогона: оснастка не удаляет её и
 	// печатает строку подключения.
 	KeepEnv = "TEST_KEEP_DB"
+	// dockerHostEnv — переменная с адресом, по которому из процесса тестов виден хост
+	// Docker. Переменная не наша: её же читает testcontainers, когда сообщает адрес
+	// поднятого контейнера. Выставляет её `make test` контейнеру с тестами; при прогоне
+	// на машине человека её нет, и подменять в строках подключения нечего.
+	dockerHostEnv = "TESTCONTAINERS_HOST_OVERRIDE"
 
 	// image — тот же образ базы, что и в Compose: тесты не должны проходить на версии
 	// PostgreSQL, которой нет в запуске.
@@ -94,7 +105,7 @@ func New(t *testing.T) *DB {
 
 	t.Cleanup(func() {
 		if keepDatabase() {
-			t.Logf("база %s оставлена после прогона (%s=1): %s", name, KeepEnv, dsn)
+			t.Logf("база %s оставлена после прогона (%s=1): %s", name, KeepEnv, fromDockerHost(dsn))
 
 			return
 		}
@@ -171,7 +182,7 @@ func serverDSN(t *testing.T) string {
 // заканчивается; в режиме TEST_KEEP_DB сборщик выключен и контейнер остаётся.
 func startServer() {
 	if dsn := os.Getenv(DSNEnv); dsn != "" {
-		server = dsn
+		server = viaDockerHost(dsn)
 
 		return
 	}
@@ -209,7 +220,7 @@ func startServer() {
 
 	if keepDatabase() {
 		fmt.Fprintf(os.Stderr, "PostgreSQL оставлен после прогона: %s\nубрать: docker rm -f %s\n",
-			dsn, container.GetContainerID())
+			fromDockerHost(dsn), container.GetContainerID())
 	}
 }
 
@@ -297,6 +308,61 @@ func dropDatabase(t *testing.T, name string) {
 	if _, err := admin.ExecContext(ctx, `DROP DATABASE IF EXISTS "`+name+`" WITH (FORCE)`); err != nil {
 		t.Errorf("убрать базу %s: %v", name, err)
 	}
+}
+
+// viaDockerHost возвращает строку подключения такой, какой по ней можно ходить из
+// процесса тестов. Внутри контейнера с тестами `localhost` — это сам контейнер, а база
+// (и та, что подняли рядом, и та, что подняли testcontainers) слушает на хосте Docker.
+func viaDockerHost(dsn string) string {
+	host := os.Getenv(dockerHostEnv)
+	if host == "" {
+		return dsn
+	}
+
+	parsed, err := url.Parse(dsn)
+	if err != nil || !isLoopback(parsed.Hostname()) {
+		return dsn
+	}
+
+	return withHost(parsed, host)
+}
+
+// fromDockerHost — обратная подмена, для печати человеку: человек сидит на хосте Docker,
+// и та же база видна ему по `localhost`. Печатать адрес, которым ходит контейнер, значит
+// печатать имя, которое снаружи ничего не резолвит.
+func fromDockerHost(dsn string) string {
+	host := os.Getenv(dockerHostEnv)
+	if host == "" {
+		return dsn
+	}
+
+	parsed, err := url.Parse(dsn)
+	if err != nil || parsed.Hostname() != host {
+		return dsn
+	}
+
+	return withHost(parsed, "localhost")
+}
+
+// isLoopback сообщает, зовёт ли этим именем машина саму себя.
+func isLoopback(host string) bool {
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+// withHost подменяет хост в строке подключения, оставляя порт и всё остальное.
+func withHost(parsed *url.URL, host string) string {
+	if port := parsed.Port(); port != "" {
+		parsed.Host = net.JoinHostPort(host, port)
+	} else {
+		parsed.Host = host
+	}
+
+	return parsed.String()
 }
 
 // masked прячет пароль в строке подключения. DSN попадает в сообщения об ошибках, а с

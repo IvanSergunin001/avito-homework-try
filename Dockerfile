@@ -73,6 +73,8 @@ COPY --from=codegen /src/internal /internal
 # его библиотеку импортирует тестовая оснастка (`internal/pkg/testdb`), чтобы накатывать
 # в тестах те же миграции. Версия CLI закреплена аргументом (`GOOSE_VERSION`) и держится
 # той же, что у библиотеки в go.mod: тогда тесты и шаг запуска катят одним и тем же goose.
+# На то, что эти две версии не разъехались, стоит сторож
+# `TestTheMigrationToolIsPinnedToTheSameVersionAsItsLibrary`.
 FROM golang:${GO_VERSION}-alpine AS goose
 ARG GOOSE_VERSION
 RUN --mount=type=cache,target=/root/.cache/go-build \

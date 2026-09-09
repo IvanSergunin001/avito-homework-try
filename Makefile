@@ -5,11 +5,11 @@ API_OUT    ?= .api-artifacts
 TEST_IMAGE ?= avito-kitchen-test
 TEST_ARGS  ?= ./...
 DOCKER_SOCK := /var/run/docker.sock
-# Сеть контейнера с тестами. `host` нужен режиму TEST_DB_DSN: иначе строка подключения
-# резолвится изнутри контейнера тестов, и база, поднятая рядом (`docker compose up
-# postgres`), по `localhost:5432` недостижима. Базу в сети Compose видно так:
-# make test TEST_NETWORK=avito-kitchen_default
-TEST_NETWORK ?= host
+# Имя, под которым из контейнера с тестами виден хост Docker — машина, где опубликованы
+# порты и базы Compose, и контейнеров testcontainers. Docker Desktop заводит это имя сам,
+# на Linux его добавляет `--add-host ...:host-gateway`; поэтому имя одно на всех
+# платформах, и разницу между ними не нужно знать ни человеку, ни этому файлу.
+DOCKER_HOST_ALIAS := host.docker.internal
 # Контекст, к которому относится новая миграция: платформа или коробка заведения. Тот же
 # перечень контекстов повторяется в `Dockerfile` (шаг миграций), в `internal/pkg/testdb`
 # (`migrationSets`) и в таблице контекстов README — третий правится во всех местах разом.
@@ -83,8 +83,14 @@ migration: ## Создать миграцию: make migration name=add_orders [c
 # TEST_KEEP_DB строку подключения к оставленной базе было бы видно только после падения.
 # Флаг добавляется сам, когда переменная выставлена: смотреть в базу после зелёного
 # прогона — ровно то, ради чего режим и заводился.
+#
+# Строку подключения из TEST_DB_DSN контейнер получает как есть: `localhost` в ней
+# подменяет на адрес хоста Docker сама оснастка (`internal/pkg/testdb`) — она же и знает,
+# что внутри контейнера `localhost` означает не ту машину, на которой человек её писал.
 test: ## Тесты; сокет Docker нужен тестам с testcontainers
 	docker build --target test --tag $(TEST_IMAGE) .
-	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) --network $(TEST_NETWORK) \
+	docker run --rm --volume $(DOCKER_SOCK):$(DOCKER_SOCK) \
+		--add-host $(DOCKER_HOST_ALIAS):host-gateway \
+		--env TESTCONTAINERS_HOST_OVERRIDE=$(DOCKER_HOST_ALIAS) \
 		--env TEST_DB_DSN --env TEST_KEEP_DB \
 		$(TEST_IMAGE) go test $(if $(TEST_KEEP_DB),-v) $(TEST_ARGS)
