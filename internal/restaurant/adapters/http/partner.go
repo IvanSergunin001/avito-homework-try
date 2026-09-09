@@ -2,15 +2,13 @@ package http
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
-	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx/problem"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http/partner_v1"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/application"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/domain"
@@ -54,22 +52,22 @@ func mountPartnerAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
 	api := partnerAPI{menu: menu, log: log}
 
 	handler := partner_v1.NewStrictHandlerWithOptions(api, nil, partner_v1.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc:  writePartnerRequestProblem,
-		ResponseErrorHandlerFunc: api.writePartnerResponseProblem,
+		RequestErrorHandlerFunc:  partnerProblems.BadRequest,
+		ResponseErrorHandlerFunc: api.writePartnerFailure,
 	})
 
 	// Лимит тела стоит перед сгенерированными маршрутами: размер тела проверяется раньше
 	// всего остального, потому что разбор параметров и тела уже читает запрос. Отказ
 	// отдаётся по схеме партнёрского контракта — по ней коробка и отвечает.
 	r.Group(func(r chi.Router) {
-		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, refuseOversizedPartnerBody))
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, partnerProblems.Oversized))
 
 		partner_v1.HandlerWithOptions(handler, partner_v1.ChiServerOptions{
 			BaseURL:    PartnerAPIPrefix,
 			BaseRouter: r,
 			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
 			// `limit`. Контракт обещает на них `problem+json`, а не текст по умолчанию.
-			ErrorHandlerFunc: writePartnerRequestProblem,
+			ErrorHandlerFunc: partnerProblems.BadRequest,
 		})
 	})
 }
@@ -88,7 +86,7 @@ func (a partnerAPI) ListMenu(
 	if err != nil {
 		return partner_v1.ListMenu400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: partner_v1.
-				BadRequestApplicationProblemPlusJSONResponse(partnerValidationProblem(err)),
+				BadRequestApplicationProblemPlusJSONResponse(partnerProblems.Validation(err)),
 		}, nil
 	}
 
@@ -142,10 +140,10 @@ func contractItem(item domain.MenuItem) partner_v1.MenuItem {
 	}
 }
 
-// partnerProblem собирает отказ партнёрского контракта. Тело — общая основа
-// `problem+json`: своих полей у этих отказов нет, а тип сгенерирован по спецификации,
-// поэтому ответ не может разойтись с тем, что обещано заведению.
-func partnerProblem(
+// partnerProblemBody собирает тело отказа партнёрского контракта — общую основу
+// `problem+json`. Своих полей у этих отказов нет, а тип сгенерирован по спецификации,
+// поэтому ответ не может разойтись с контрактом.
+func partnerProblemBody(
 	status int, code partner_v1.ProblemCode, title, detail string,
 ) partner_v1.ProblemBase {
 	return partner_v1.ProblemBase{
@@ -157,62 +155,25 @@ func partnerProblem(
 	}
 }
 
-// partnerValidationProblem собирает отказ по неверному запросу.
-func partnerValidationProblem(err error) partner_v1.ProblemBase {
-	return partnerProblem(http.StatusBadRequest, partner_v1.ValidationFailed,
-		"Некорректные параметры запроса", err.Error())
+// partnerProblems — отказы партнёрского контракта в коробке. Форма у них та же, что у
+// остальных четырёх поверхностей проекта, поэтому она живёт одна на всех
+// (problem.Writer), а здесь названо только то, чем эта половина контракта от них
+// отличается: сгенерированные типы, коды и тексты.
+var partnerProblems = problem.Writer[partner_v1.ProblemBase, partner_v1.ProblemCode]{
+	Body: partnerProblemBody,
+	Codes: problem.Codes[partner_v1.ProblemCode]{
+		ValidationFailed: partner_v1.ValidationFailed,
+		NotImplemented:   partner_v1.NotImplemented,
+		InternalError:    partner_v1.InternalError,
+	},
+	MaxRequestBytes: maxRequestBodyBytes,
+	FailureTitle:    "Внутренняя ошибка коробки",
+	Surface:         "partner",
 }
 
-// writePartnerRequestProblem отвечает на неразобранный запрос — неверный uuid в пути,
-// нечисловой `limit`, неразбираемое тело.
-//
-// Тело, оборвавшееся на пределе, приезжает сюда же и отдаётся тем же отказом, что и
-// объявленная длина сверх предела: причина у площадки одна.
-func writePartnerRequestProblem(w http.ResponseWriter, r *http.Request, err error) {
-	var oversized *http.MaxBytesError
-	if errors.As(err, &oversized) {
-		refuseOversizedPartnerBody(w, r)
-
-		return
-	}
-
-	problem.Write(r.Context(), w, http.StatusBadRequest, partnerValidationProblem(err))
-}
-
-// refuseOversizedPartnerBody отвечает на запрос, тело которого больше допустимого.
-//
-// Код причины — `validation_failed`: запрос не прошёл проверку, и другого кода на это в
-// закрытом перечне спецификации нет. Заводить новый код ради размера тела незачем — ветка
-// поведения у площадки та же самая, что и при любом непринятом запросе.
-func refuseOversizedPartnerBody(w http.ResponseWriter, r *http.Request) {
-	detail := fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes)
-
-	problem.Write(r.Context(), w, http.StatusRequestEntityTooLarge, partner_v1.ProblemBase{
-		Type:   problem.DefaultType,
-		Title:  "Слишком большое тело запроса",
-		Status: http.StatusRequestEntityTooLarge,
-		Detail: &detail,
-		Code:   partner_v1.ValidationFailed,
-	})
-}
-
-// writePartnerResponseProblem отвечает, когда обработчик вернул ошибку. Операция,
-// описанная контрактом, но ещё не реализованная, — это `501`; всё остальное `500`.
-//
-// Причина отказа по вине коробки уходит в лог, а не площадке: наружу она рассказала бы об
-// устройстве коробки, а выбрать по ней ветку поведения площадка всё равно не может.
-func (a partnerAPI) writePartnerResponseProblem(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, httpx.ErrNotImplemented) {
-		problem.Write(r.Context(), w, http.StatusNotImplemented, partnerProblem(
-			http.StatusNotImplemented, partner_v1.NotImplemented,
-			"Операция ещё не реализована", err.Error()))
-
-		return
-	}
-
-	a.log.ErrorContext(r.Context(), "menu request failed", slog.Any("error", err))
-
-	problem.Write(r.Context(), w, http.StatusInternalServerError, partnerProblem(
-		http.StatusInternalServerError, partner_v1.InternalError,
-		"Внутренняя ошибка коробки", "повторите запрос позже"))
+// writePartnerFailure отвечает, когда обработчик вернул ошибку: `501` на операцию,
+// описанную контрактом, но ещё не реализованную, и `500` на всё остальное. Форма отказа
+// общая, а логгер у каждого адаптера свой — за ним метод и заводится.
+func (a partnerAPI) writePartnerFailure(w http.ResponseWriter, r *http.Request, err error) {
+	partnerProblems.Failure(a.log, w, r, err)
 }

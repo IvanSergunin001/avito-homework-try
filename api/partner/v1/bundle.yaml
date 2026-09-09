@@ -9,7 +9,8 @@ info:
       выдача меню, приём заказа, отмена принятого заказа. Заведение со своей системой
       реализует их само; заведению без своей системы площадка даёт готовую коробку.
     - `platform` — операции, которые **площадка предоставляет заведению**: внеочередное
-      обновление каталога и уведомление о смене статуса заказа.
+      обновление каталога, уведомление о смене статуса заказа и просмотр того, по каким
+      адресам площадка будет ходить в заведение.
 
     Каталог площадка забирает сама (pull) по расписанию; ручка обновления нужна, чтобы
     изменение цены или стоп-листа доехало до витрины сразу, а не по таймеру.
@@ -170,6 +171,41 @@ paths:
       responses:
         '202':
           description: Просьба принята, синхронизация запущена.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /integration:
+    get:
+      operationId: getIntegration
+      summary: Как площадка видит подключение заведения (предоставляет площадка)
+      description: |
+        Заведение смотрит, по каким адресам площадка будет к нему ходить.
+
+        Адрес интеграции заведение сообщает площадке при онбординге, а пути контракта площадка
+        приписывает к нему сама. Склейка не всегда даёт то, чего заведение ожидало: адрес
+        может быть с портом, с префиксом пути или с параметром запроса, и увидеть результат
+        заведению негде — до этой ручки первым сообщением о неверном адресе был неотвеченный
+        запрос в момент первого заказа.
+
+        Отвечает площадка тому заведению, чьим ключом её спросили: чужих реквизитов здесь не
+        видно.
+      tags:
+        - platform
+      servers:
+        - url: https://kitchen.avito.ru/api/kitchen/v1/partner
+          description: Площадка
+        - url: http://localhost:8080/api/kitchen/v1/partner
+          description: Локальный запуск через Compose
+      security:
+        - partnerKey: []
+      responses:
+        '200':
+          description: Адрес интеграции и адреса всех операций контракта.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -546,6 +582,50 @@ components:
         cancelled_at:
           type: string
           format: date-time
+    IntegrationEndpoint:
+      type: object
+      description: Адрес одной операции контракта у этого заведения.
+      required:
+        - operation
+        - method
+        - url
+      properties:
+        operation:
+          type: string
+          description: '`operationId` операции в этом документе.'
+          example: listMenu
+        method:
+          type: string
+          description: Метод запроса.
+          example: GET
+        url:
+          type: string
+          description: |
+            Полный адрес операции. Сегмент в фигурных скобках — имя параметра пути, а не его
+            значение: площадка подставляет туда идентификатор в момент запроса.
+          example: https://baton.example.org/api/kitchen/v1/restaurant/menu
+    Integration:
+      type: object
+      description: |
+        Как площадка видит подключение заведения: адрес, который заведение сообщило при
+        онбординге, и адреса всех операций контракта, по которым площадка будет к нему ходить.
+      required:
+        - base_url
+        - endpoints
+      properties:
+        base_url:
+          type: string
+          format: uri
+          description: |
+            Адрес интеграции, как его хранит площадка. Может отличаться от присланного при
+            онбординге: завершающий слэш пути снимается, чтобы один и тот же адрес не давал
+            двух разных путей к одному заведению.
+          example: https://baton.example.org
+        endpoints:
+          type: array
+          description: Адреса операций контракта — все, по которым площадка обращается к заведению.
+          items:
+            $ref: '#/components/schemas/IntegrationEndpoint'
     NotifiedStatus:
       type: string
       description: |

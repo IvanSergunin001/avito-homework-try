@@ -17,17 +17,21 @@ import (
 // с общей обвязкой и её API. Сборка живёт здесь, а не в `cmd`, чтобы тест шва поднимал ту
 // же самую площадку, что и запуск, а не её похожую копию.
 //
-// Клиентское API (`/api/kitchen/v1/customer`) уже смонтировано; партнёрское и админское
-// монтируются сюда на своих этапах — их серверные интерфейсы уже сгенерированы по
-// спецификациям.
+// API три: клиентское и админское открыты, партнёрское закрыто выданным заведению
+// ключом. Токена у площадки нет ни одного — админские ручки закрывает не она, а контур,
+// в котором её запускают; цена решения названа в спецификации и в README.
 func NewRouter(log *slog.Logger, db *sql.DB) *chi.Mux {
 	restaurants := postgres.NewRestaurants(db)
 	showcase := application.NewShowcase(restaurants)
 	catalog := application.NewCatalog(restaurants, postgres.NewProducts(db))
+	onboarding := application.NewOnboarding(restaurants)
+	access := guard{gate: application.NewGatekeeper(restaurants), log: log}
 
 	r := httpx.NewRouter(log)
 
 	mountCustomerAPI(r, showcase, catalog, log)
+	mountPartnerAPI(r, access, log)
+	mountAdminAPI(r, onboarding, log)
 
 	return r
 }

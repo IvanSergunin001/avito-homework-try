@@ -33,9 +33,12 @@ func TestRestaurantWithAMenuIsNotDeleted(t *testing.T) {
 		productID    = "018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a92"
 	)
 
-	if _, err := db.ExecContext(t.Context(),
-		`INSERT INTO platform.restaurants (id, name) VALUES ($1, $2)`,
-		restaurantID, "Пекарня «Батон»"); err != nil {
+	// Реквизиты интеграции обязательны с 00004: заведение без адреса и без ключа —
+	// заведение, до которого площадке не дойти, и база такого не принимает.
+	if _, err := db.ExecContext(t.Context(), `
+		INSERT INTO platform.restaurants (id, name, base_url, api_key_hash)
+		VALUES ($1, $2, $3, encode(sha256(convert_to($4, 'UTF8')), 'hex'))`,
+		restaurantID, "Пекарня «Батон»", "http://restaurant:8081", "pk_MENUKEYMENUKEYMENUKEYMENU"); err != nil {
 		t.Fatalf("завести заведение: %v", err)
 	}
 	if _, err := db.ExecContext(t.Context(),

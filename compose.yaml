@@ -36,6 +36,10 @@ services:
     environment:
       GOOSE_DRIVER: postgres
       GOOSE_DBSTRING: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
+      # Демо-данные включены по умолчанию: `docker compose up` поднимает демо, и без них
+      # витрина после запуска пуста. Ключ демо-заведения опубликован (README), поэтому
+      # там, где базу поднимают не для демонстрации, переменная выставляется в 0.
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-1}
     depends_on:
       postgres:
         condition: service_healthy

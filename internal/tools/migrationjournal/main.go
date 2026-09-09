@@ -21,19 +21,20 @@ import (
 // шагу запуска: каталогом миграций (`/migrations/<контекст>`) и значением `context=`
 // у `make migration`.
 var journals = map[string]string{
-	"platform":   platformmigrations.VersionTable,
-	"restaurant": boxmigrations.VersionTable,
+	"platform":      platformmigrations.VersionTable,
+	"platform_seed": platformmigrations.SeedVersionTable,
+	"restaurant":    boxmigrations.VersionTable,
 }
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "нужен контекст: migrationjournal platform|restaurant")
+		fmt.Fprintln(os.Stderr, "нужен контекст: migrationjournal platform|platform_seed|restaurant")
 		os.Exit(2)
 	}
 
 	journal, known := journals[os.Args[1]]
 	if !known {
-		fmt.Fprintf(os.Stderr, "неизвестный контекст %q: есть только platform и restaurant\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "неизвестный контекст %q: есть platform, platform_seed и restaurant\n", os.Args[1])
 		os.Exit(2)
 	}
 

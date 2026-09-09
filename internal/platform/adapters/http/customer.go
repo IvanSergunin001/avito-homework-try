@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
-	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx/problem"
 	"github.com/IvanSergunin001/Test157/internal/platform/adapters/http/customer_v1"
 	"github.com/IvanSergunin001/Test157/internal/platform/application"
 	"github.com/IvanSergunin001/Test157/internal/platform/domain"
@@ -61,8 +61,8 @@ func mountCustomerAPI(
 	api := customerAPI{showcase: showcase, catalog: catalog, log: log}
 
 	handler := customer_v1.NewStrictHandlerWithOptions(api, nil, customer_v1.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc:  writeCustomerRequestProblem,
-		ResponseErrorHandlerFunc: api.writeCustomerResponseProblem,
+		RequestErrorHandlerFunc:  customerProblems.BadRequest,
+		ResponseErrorHandlerFunc: api.writeCustomerFailure,
 	})
 
 	// Лимит тела вешается на клиентское API, а не на весь роутер: отказ отдаётся по схеме
@@ -70,14 +70,14 @@ func mountCustomerAPI(
 	// перед сгенерированными маршрутами, потому что размер тела — это то, что проверяется
 	// раньше всего остального: разбор параметров и тела уже читает запрос.
 	r.Group(func(r chi.Router) {
-		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, refuseOversizedCustomerBody))
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, customerProblems.Oversized))
 
 		customer_v1.HandlerWithOptions(handler, customer_v1.ChiServerOptions{
 			BaseURL:    CustomerAPIPrefix,
 			BaseRouter: r,
 			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
 			// `limit`. Контракт обещает на них `problem+json`, а не текст по умолчанию.
-			ErrorHandlerFunc: writeCustomerRequestProblem,
+			ErrorHandlerFunc: customerProblems.BadRequest,
 		})
 	})
 }
@@ -94,7 +94,7 @@ func (a customerAPI) ListRestaurants(
 	if err != nil {
 		return customer_v1.ListRestaurants400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: customer_v1.
-				BadRequestApplicationProblemPlusJSONResponse(customerValidationProblem(err)),
+				BadRequestApplicationProblemPlusJSONResponse(customerProblems.Validation(err)),
 		}, nil
 	}
 
@@ -149,7 +149,7 @@ func (a customerAPI) ListRestaurantProducts(
 	if err != nil {
 		return customer_v1.ListRestaurantProducts400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: customer_v1.
-				BadRequestApplicationProblemPlusJSONResponse(customerValidationProblem(err)),
+				BadRequestApplicationProblemPlusJSONResponse(customerProblems.Validation(err)),
 		}, nil
 	}
 
@@ -179,7 +179,7 @@ func (a customerAPI) SearchProducts(
 	if err != nil {
 		return customer_v1.SearchProducts400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: customer_v1.
-				BadRequestApplicationProblemPlusJSONResponse(customerValidationProblem(err)),
+				BadRequestApplicationProblemPlusJSONResponse(customerProblems.Validation(err)),
 		}, nil
 	}
 
@@ -201,7 +201,7 @@ func (a customerAPI) GetProduct(
 	case errors.Is(err, domain.ErrProductNotFound):
 		return customer_v1.GetProduct404ApplicationProblemPlusJSONResponse{
 			NotFoundApplicationProblemPlusJSONResponse: customer_v1.
-				NotFoundApplicationProblemPlusJSONResponse(customerProblem(
+				NotFoundApplicationProblemPlusJSONResponse(customerProblemBody(
 					http.StatusNotFound, customer_v1.ProductNotFound, "Товар не найден",
 					"товара не существует или его заведение больше не работает")),
 		}, nil
@@ -315,10 +315,10 @@ func productCard(product domain.Product) customer_v1.Product {
 	return card
 }
 
-// customerProblem собирает отказ клиентского API. Тело — общая основа `problem+json`:
-// своих полей у этих отказов нет, а тип сгенерирован по спецификации, поэтому ответ не
-// может разойтись с контрактом.
-func customerProblem(
+// customerProblemBody собирает тело отказа клиентского API — общую основу
+// `problem+json`. Своих полей у этих отказов нет, а тип сгенерирован по спецификации,
+// поэтому ответ не может разойтись с контрактом.
+func customerProblemBody(
 	status int, code customer_v1.ProblemCode, title, detail string,
 ) customer_v1.ProblemBase {
 	return customer_v1.ProblemBase{
@@ -330,68 +330,32 @@ func customerProblem(
 	}
 }
 
+// customerProblems — отказы клиентского API. Форма у них та же, что у остальных четырёх
+// поверхностей проекта, поэтому она живёт одна на всех (problem.Writer), а здесь названо
+// только то, чем клиентское API от них отличается: сгенерированные типы, коды и тексты.
+var customerProblems = problem.Writer[customer_v1.ProblemBase, customer_v1.ProblemCode]{
+	Body: customerProblemBody,
+	Codes: problem.Codes[customer_v1.ProblemCode]{
+		ValidationFailed: customer_v1.ValidationFailed,
+		NotImplemented:   customer_v1.NotImplemented,
+		InternalError:    customer_v1.InternalError,
+	},
+	MaxRequestBytes: maxRequestBodyBytes,
+	FailureTitle:    "Внутренняя ошибка площадки",
+	Surface:         "customer",
+}
+
 // restaurantNotFoundProblem — отказ «заведения нет». Он одинаков у карточки заведения и у
 // его меню: обёртки ответов разные, а причина и текст, который читает человек, — одни, и
 // править их в двух местах значило бы однажды разойтись.
 func restaurantNotFoundProblem() customer_v1.ProblemBase {
-	return customerProblem(http.StatusNotFound, customer_v1.RestaurantNotFound,
+	return customerProblemBody(http.StatusNotFound, customer_v1.RestaurantNotFound,
 		"Заведение не найдено", "заведение не существует или больше не работает")
 }
 
-// customerValidationProblem собирает отказ по неверному запросу.
-func customerValidationProblem(err error) customer_v1.ProblemBase {
-	return customerProblem(http.StatusBadRequest, customer_v1.ValidationFailed,
-		"Некорректные параметры запроса", err.Error())
-}
-
-// writeCustomerRequestProblem отвечает на неразобранный запрос — неверный uuid в пути,
-// нечисловой `limit`, неразбираемое тело.
-//
-// Тело, оборвавшееся на пределе, приезжает сюда же — разбор натыкается на него уже после
-// middleware, — и отдаётся тем же отказом, что и объявленная длина сверх предела: причина
-// у клиента одна, и знать, объявил он длину честно или прислал тело без длины вовсе, ему
-// незачем.
-func writeCustomerRequestProblem(w http.ResponseWriter, r *http.Request, err error) {
-	var oversized *http.MaxBytesError
-	if errors.As(err, &oversized) {
-		refuseOversizedCustomerBody(w, r)
-
-		return
-	}
-
-	problem.Write(r.Context(), w, http.StatusBadRequest, customerValidationProblem(err))
-}
-
-// refuseOversizedCustomerBody отвечает на запрос, тело которого больше допустимого.
-//
-// Код причины — `validation_failed`: запрос не прошёл проверку, и другого кода на это в
-// закрытом перечне спецификации нет. Заводить новый код ради размера тела незачем —
-// ветка поведения у клиента та же самая, что и при любом непринятом запросе.
-func refuseOversizedCustomerBody(w http.ResponseWriter, r *http.Request) {
-	problem.Write(r.Context(), w, http.StatusRequestEntityTooLarge, customerProblem(
-		http.StatusRequestEntityTooLarge, customer_v1.ValidationFailed,
-		"Слишком большое тело запроса",
-		fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes)))
-}
-
-// writeCustomerResponseProblem отвечает, когда обработчик вернул ошибку. Операция,
-// описанная контрактом, но ещё не реализованная, — это `501`; всё остальное `500`.
-//
-// Причина отказа по вине площадки уходит в лог, а не клиенту: наружу она рассказала бы об
-// устройстве службы, а выбрать по ней ветку поведения клиент всё равно не может — ему
-// остаётся повторить запрос позже.
-func (a customerAPI) writeCustomerResponseProblem(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, httpx.ErrNotImplemented) {
-		problem.Write(r.Context(), w, http.StatusNotImplemented, customerProblem(
-			http.StatusNotImplemented, customer_v1.NotImplemented,
-			"Операция ещё не реализована", err.Error()))
-
-		return
-	}
-
-	a.log.ErrorContext(r.Context(), "customer request failed", slog.Any("error", err))
-
-	problem.Write(r.Context(), w, http.StatusInternalServerError, customerProblem(
-		http.StatusInternalServerError, customer_v1.InternalError,
-		"Внутренняя ошибка площадки", "повторите запрос позже"))
+// writeCustomerFailure отвечает, когда обработчик вернул ошибку: `501` на операцию,
+// описанную контрактом, но ещё не реализованную, и `500` на всё остальное. Форма отказа
+// общая, а логгер у каждого адаптера свой — за ним метод и заводится.
+func (a customerAPI) writeCustomerFailure(w http.ResponseWriter, r *http.Request, err error) {
+	customerProblems.Failure(a.log, w, r, err)
 }

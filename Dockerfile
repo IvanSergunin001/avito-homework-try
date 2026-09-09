@@ -59,6 +59,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
  && go tool oapi-codegen -config api/partner/v1/codegen-server-restaurant.yaml     api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/partner/v1/codegen-client.yaml                api/partner/v1/bundle.yaml \
  && go tool oapi-codegen -config api/admin/v1/codegen-server.yaml                  api/admin/v1/bundle.yaml \
+ && go tool oapi-codegen -config api/admin/v1/codegen-client.yaml                  api/admin/v1/bundle.yaml \
  && go tool oapi-codegen -config api/restaurant/operator/v1/codegen-server.yaml    api/restaurant/operator/v1/bundle.yaml \
  && cd api && go mod tidy
 
@@ -91,7 +92,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM source AS migration-journals
 RUN --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p /journals \
- && for context in platform restaurant; do \
+ && for context in platform restaurant platform_seed; do \
         go run ./internal/tools/migrationjournal "${context}" > "/journals/${context}"; \
     done
 
@@ -102,20 +103,67 @@ FROM alpine:3.22 AS migrate
 COPY --from=goose /go/bin/goose /usr/local/bin/goose
 COPY internal/platform/migrations/*.sql /migrations/platform/
 COPY internal/restaurant/migrations/*.sql /migrations/restaurant/
+# Демонстрационные данные — отдельный контекст со своим журналом: они часть запуска демо,
+# а не часть схемы. Тестам они не накатываются (см. internal/pkg/testdb), иначе каждый
+# тест, который считает заведения, считал бы вместе со своими ещё и демонстрационное.
+COPY internal/platform/migrations/seed/*.sql /migrations/platform_seed/
 COPY --from=migration-journals /journals /journals
 # У каждого контекста свой каталог миграций и свой журнал применённых; имя журнала лежит
 # рядом, в /journals/<контекст>, и приходит из Go-константы. Журналы лежат в public,
 # а не в самих схемах: goose создаёт журнал до первой миграции, а первая миграция как раз
-# и создаёт схему.
+# и создаёт схему. Демо-данные накатываются последними и откатываются первыми: они живут
+# в таблицах, которые заводит схема.
 COPY <<'SCRIPT' /usr/local/bin/migrate
 #!/bin/sh
 set -eu
 
-# Перечень контекстов повторяется там, где Go не дотягивается: здесь, в стадии
-# `migration-journals`, в значении `context` по умолчанию (Makefile) и в таблице
-# контекстов (README.md). Третий контекст правится во всех этих местах разом, и в
-# `migrationSets` (internal/pkg/testdb) тоже.
-for context in platform restaurant; do
+# Перечень контекстов шага запуска повторяется здесь и в стадии `migration-journals`, а
+# их имена документирует README. `platform` и `restaurant` дополнительно перечислены в
+# Makefile и `migrationSets` (internal/pkg/testdb); `platform_seed` там намеренно нет —
+# заготовки seed создаются не общей командой, а тестам демо-данные не нужны.
+#
+# Демо-данные накатываются только там, где их просят: у демо-заведения опубликованный
+# ключ (см. seed/00001_demo_restaurant.sql), и подсовывать его любому окружению, где
+# выполнили штатный шаг миграций, площадка не вправе. `compose.yaml` включает их сам,
+# поэтому `docker compose up` остаётся рабочим демо без единой настройки.
+contexts="platform restaurant"
+if [ "${SEED_DEMO_DATA:-0}" = "1" ]; then
+	contexts="${contexts} platform_seed"
+fi
+
+# Откат идёт в обратном порядке: `Down` сида удаляет строки из таблиц, которые сносит
+# `Down` схемы, и в прямом порядке он выполнялся бы уже по несуществующей схеме — goose
+# падал бы, а журнал сида остался бы с отметкой «применено». Следующий `up` поднял бы
+# схему заново и пропустил сид как накатанный: демо-заведения не было бы, и ошибки при
+# этом не вывелось бы.
+case "${1:-}" in
+down | down-to | reset)
+	reversed=""
+	for context in ${contexts}; do
+		reversed="${context}${reversed:+ }${reversed}"
+	done
+	contexts="${reversed}"
+
+	# Сносящая команда спрашивает подтверждение: `reset` и `down-to 0` удаляют схемы
+	# целиком вместе с данными, а восстановить их после `docker compose run` нечем.
+	# Молчание считается отказом — в неинтерактивном запуске (CI, скрипт) читать ответ
+	# не у кого, и там подтверждение даётся заранее: SEED_DEMO_DATA этому не поможет,
+	# нужен MIGRATE_ASSUME_YES=1.
+	if [ "${MIGRATE_ASSUME_YES:-0}" != "1" ]; then
+		printf 'goose %s снесёт миграции контекстов [%s] вместе с их данными. Вы уверены? [y/N] ' "$*" "${contexts}"
+		read -r answer || answer=""
+		case "${answer}" in
+		y | Y | yes | YES) ;;
+		*)
+			echo "Отменено: ничего не снесено."
+			exit 1
+			;;
+		esac
+	fi
+	;;
+esac
+
+for context in ${contexts}; do
 	echo "== ${context}: goose $*"
 	goose -table "$(cat "/journals/${context}")" -dir "/migrations/${context}" "$@"
 done

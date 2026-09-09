@@ -25,10 +25,22 @@ import (
 
 	"github.com/google/uuid"
 
+	admin "github.com/IvanSergunin001/Test157/api/admin/v1"
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
 	"github.com/IvanSergunin001/Test157/internal/pkg/testdb"
 	platformhttp "github.com/IvanSergunin001/Test157/internal/platform/adapters/http"
 )
+
+// staffMember — сотрудник площадки, которым тесты представляются админскому API.
+// Значение произвольное: заголовок `User-Id` не удостоверяет никого — площадка верит
+// ему по условию задания, и админские ручки в MVP не закрыты ничем (см. README).
+var staffMember = uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1aff")
+
+// boxAddress — адрес коробки заведения, который тесты дают заведению при подключении.
+// Никто по нему не ходит: синхронизация каталога и оформление заказа приезжают своими
+// слайсами и подменят сторону заведения HTTP-заглушкой — здесь адрес важен только как
+// реквизит, который площадка хранит и меняет.
+const boxAddress = "http://box.test:8081"
 
 // platform — площадка, поднятая целиком для одного теста.
 type platform struct {
@@ -36,7 +48,8 @@ type platform struct {
 	// покупательский фронтенд.
 	srv *httptest.Server
 	// db — база площадки, своя у каждого теста и с накатанными миграциями: тесты готовят
-	// через неё исходное состояние и заглядывают в него после запроса. Подменять
+	// через неё то, что система пока не умеет заводить сама, и заглядывают в состояние,
+	// которого не видно ни на одной ручке, — например, в хранимый хеш ключа. Подменять
 	// хранилище нечем — оно настоящее с первого же теста, и переезжать на настоящий
 	// PostgreSQL задним числом, когда появятся репозитории, шву не придётся.
 	db *testdb.DB
@@ -63,24 +76,74 @@ type response struct {
 	Status      int
 	ContentType string
 	Body        []byte
+	// Challenge — заголовок `WWW-Authenticate`: им отказ `401` называет схему, которой
+	// в него стучатся.
+	Challenge string
 }
 
 // get выполняет запрос к площадке и возвращает прочитанный ответ.
 func (p *platform) get(t *testing.T, path string) response {
 	t.Helper()
 
-	resp, err := p.srv.Client().Get(p.srv.URL + path)
+	return p.do(t, http.MethodGet, path, "", nil)
+}
+
+// do выполняет запрос к площадке с ключом key (пустой — без заголовка авторизации) и
+// возвращает прочитанный ответ. Сырым запросом ходят только те тесты, куда не дотягивается
+// сгенерированный клиент: партнёрское API отвечает кодами вне контракта, пока его операции
+// не реализованы, а разбор параметров проверяется значениями, которых в контракте нет.
+func (p *platform) do(t *testing.T, method, path, key string, body []byte) response {
+	t.Helper()
+
+	var payload io.Reader
+	if body != nil {
+		payload = bytes.NewReader(body)
+	}
+
+	return p.send(t, method, path, key, payload)
+}
+
+// send выполняет запрос телом из произвольного источника и возвращает прочитанный ответ.
+// Отдельно от `do` он нужен там, где важно, каким источником уходит тело: из `*bytes.Reader`
+// клиент вычисляет длину и объявляет её сам, а из голого io.Reader — не может (см.
+// postWithoutDeclaredLength). Через `prepare` вызывающий дописывает запросу заголовки,
+// которых общий путь не знает.
+func (p *platform) send(
+	t *testing.T, method, path, key string, body io.Reader, prepare ...func(*http.Request),
+) response {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), method, p.srv.URL+path, body)
 	if err != nil {
-		t.Fatalf("запрос %s: %v", path, err)
+		t.Fatalf("собрать запрос %s %s: %v", method, path, err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	for _, apply := range prepare {
+		apply(req)
+	}
+
+	resp, err := p.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("запрос %s %s: %v", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	read, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("прочитать ответ %s: %v", path, err)
+		t.Fatalf("прочитать ответ %s %s: %v", method, path, err)
 	}
 
-	return response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: body}
+	return response{
+		Status:      resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Body:        read,
+		Challenge:   resp.Header.Get("WWW-Authenticate"),
+	}
 }
 
 // problemDocument — отказ в формате problem+json.
@@ -157,7 +220,7 @@ func names[T any](items []T, name func(T) string) []string {
 func (p *platform) post(t *testing.T, path string, body []byte) response {
 	t.Helper()
 
-	return p.send(t, path, bytes.NewReader(body))
+	return p.do(t, http.MethodPost, path, "", body)
 }
 
 // postWithoutDeclaredLength отправляет тело источником, длину которого клиент заранее не
@@ -170,73 +233,103 @@ func (p *platform) post(t *testing.T, path string, body []byte) response {
 func (p *platform) postWithoutDeclaredLength(t *testing.T, path string, body []byte) response {
 	t.Helper()
 
-	return p.send(t, path, struct{ io.Reader }{bytes.NewReader(body)}, func(r *http.Request) {
-		r.Header.Set("User-Id", uuid.New().String())
-	})
+	return p.send(t, http.MethodPost, path, "", struct{ io.Reader }{bytes.NewReader(body)},
+		func(r *http.Request) {
+			r.Header.Set("User-Id", uuid.New().String())
+		})
 }
 
-// send отправляет тело на площадку и возвращает прочитанный ответ.
-func (p *platform) send(t *testing.T, path string, body io.Reader, prepare ...func(*http.Request)) response {
+// registration — подключённое заведение вместе с тем, что площадка сообщила о нём один
+// раз: партнёрским ключом.
+type registration struct {
+	// ID — идентификатор заведения на площадке.
+	ID uuid.UUID
+	// BaseURL — адрес интеграции, с которым заведение подключили.
+	BaseURL string
+	// Key — партнёрский ключ открытым текстом: больше площадка его не покажет.
+	Key string
+}
+
+// onboarding — сгенерированный по спецификации клиент админского API. Оснастка смотрит
+// на площадку теми же глазами, что и внутренний инструмент администратора: разбирает
+// ответ типами контракта, а не своей копией схемы, — разойтись с контрактом такой тест
+// не может.
+func (p *platform) onboarding(t *testing.T) *admin.ClientWithResponses {
 	t.Helper()
 
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.srv.URL+path, body)
+	client, err := admin.NewClientWithResponses(p.srv.URL+platformhttp.AdminAPIPrefix,
+		admin.WithHTTPClient(p.srv.Client()))
 	if err != nil {
-		t.Fatalf("собрать запрос POST %s: %v", path, err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	for _, apply := range prepare {
-		apply(request)
+		t.Fatalf("собрать клиент админского API: %v", err)
 	}
 
-	resp, err := p.srv.Client().Do(request)
-	if err != nil {
-		t.Fatalf("запрос POST %s: %v", path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	return client
+}
 
-	read, err := io.ReadAll(resp.Body)
+// register подключает заведение админской ручкой — так же, как это сделает администратор
+// площадки. Прямой вставкой в базу заведения больше не заводятся: тест, готовящий
+// состояние в обход системы, проверяет систему, которой нет.
+func (p *platform) register(t *testing.T, name, baseURL string) registration {
+	t.Helper()
+
+	resp, err := p.onboarding(t).RegisterRestaurantWithResponse(t.Context(),
+		&admin.RegisterRestaurantParams{UserId: staffMember},
+		admin.NewRestaurant{Name: name, BaseUrl: baseURL})
 	if err != nil {
-		t.Fatalf("прочитать ответ POST %s: %v", path, err)
+		t.Fatalf("подключить заведение %q: %v", name, err)
+	}
+	if resp.JSON201 == nil {
+		t.Fatalf("регистрация заведения %q вернула %d, ожидали 201: %s",
+			name, resp.HTTPResponse.StatusCode, resp.Body)
 	}
 
-	return response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: read}
+	return registration{ID: resp.JSON201.Id, BaseURL: resp.JSON201.BaseUrl, Key: resp.JSON201.PartnerKey}
+}
+
+// change правит реквизиты заведения админской ручкой и возвращает ответ как есть: тесты
+// онбординга разбирают по нему новые реквизиты, а тесты отказов — сам отказ.
+//
+// Правка частичная: в requisites заполняется только то, что тест меняет. Остальное
+// площадка обязана оставить как было, и именно это проверяют тесты, зовущие помощник с
+// одним заполненным полем.
+func (p *platform) change(
+	t *testing.T, id uuid.UUID, requisites admin.RestaurantUpdate,
+) *admin.UpdateRestaurantResponse {
+	t.Helper()
+
+	resp, err := p.onboarding(t).UpdateRestaurantWithResponse(t.Context(), id,
+		&admin.UpdateRestaurantParams{UserId: staffMember}, requisites)
+	if err != nil {
+		t.Fatalf("изменить реквизиты заведения %s: %v", id, err)
+	}
+
+	return resp
 }
 
 // openRestaurant заводит на площадке работающее заведение и возвращает его идентификатор.
-//
-// Заведение появляется прямо в базе: админской ручки регистрации на этом этапе ещё нет,
-// а подменять хранилище нечем — оно настоящее. Как только регистрация появится, исходное
-// состояние будет готовиться ею.
 func (p *platform) openRestaurant(t *testing.T, name string) uuid.UUID {
 	t.Helper()
 
-	return p.restaurant(t, name, true)
+	return p.register(t, name, boxAddress).ID
 }
 
 // closedRestaurant заводит заведение, которое больше не работает.
+//
+// Подключается оно так же, как всякое другое, и выключается правкой реквизитов: отдельной
+// ручки «выключить» у площадки нет — отключение это та же замена реквизитов, и разводить
+// их значило бы обещать администратору разницу, которой нет.
 func (p *platform) closedRestaurant(t *testing.T, name string) uuid.UUID {
 	t.Helper()
 
-	return p.restaurant(t, name, false)
-}
+	registered := p.register(t, name, boxAddress)
 
-func (p *platform) restaurant(t *testing.T, name string, working bool) uuid.UUID {
-	t.Helper()
-
-	// uuid v7 — тот же вид идентификатора, что площадка выдаёт заведениям сама:
-	// монотонный, чтобы вставки не разносило по индексу.
-	id, err := uuid.NewV7()
-	if err != nil {
-		t.Fatalf("сгенерировать идентификатор заведения: %v", err)
+	off := false
+	if resp := p.change(t, registered.ID, admin.RestaurantUpdate{IsActive: &off}); resp.JSON200 == nil {
+		t.Fatalf("отключение заведения %q вернуло %d, ожидали 200: %s",
+			name, resp.HTTPResponse.StatusCode, resp.Body)
 	}
 
-	_, err = p.db.ExecContext(t.Context(),
-		`INSERT INTO platform.restaurants (id, name, is_active) VALUES ($1, $2, $3)`, id, name, working)
-	if err != nil {
-		t.Fatalf("завести заведение %q: %v", name, err)
-	}
-
-	return id
+	return registered.ID
 }
 
 // menuItem — позиция меню, которую тест кладёт заведению. Нули полей — обычная позиция:
