@@ -133,20 +133,13 @@ func (partnerAPI) CancelAcceptedOrder(
 // Цена уезжает тем же целым числом копеек, каким хранится: перевод в дробное число по
 // дороге означал бы, что у коробки и у витрины разные деньги.
 func contractItem(item domain.MenuItem) partner_v1.MenuItem {
-	contract := partner_v1.MenuItem{
+	return partner_v1.MenuItem{
 		ExternalId:  item.ExternalID(),
 		Name:        item.Name,
+		Description: optional(item.Description),
 		Price:       int64(item.Price),
 		IsAvailable: item.IsAvailable(),
 	}
-
-	// Описания у позиции может не быть — тогда поля нет и в ответе: пустая строка
-	// сообщила бы площадке, что описание есть и оно пустое.
-	if item.Description != "" {
-		contract.Description = &item.Description
-	}
-
-	return contract
 }
 
 // partnerProblem собирает отказ партнёрского контракта. Тело — общая основа

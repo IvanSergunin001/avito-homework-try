@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+
+	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http"
 )
 
 // missingItem — идентификатор позиции, которой в меню нет: правильный uuid v7, просто
@@ -197,11 +199,14 @@ func TestOperatorMenuUsesDeclaredWindowAndRefusesLargerOne(t *testing.T) {
 
 	b := newBox(t)
 
-	if page := b.operatorMenuPage(t, ""); page.Page.Limit != 20 || page.Page.Offset != 0 {
-		t.Errorf("страница limit=%d offset=%d, ожидали умолчания 20 и 0", page.Page.Limit, page.Page.Offset)
+	page := b.operatorMenuPage(t, "")
+	if page.Page.Limit != restauranthttp.OperatorMenuPageDefault || page.Page.Offset != 0 {
+		t.Errorf("страница limit=%d offset=%d, ожидали умолчания %d и 0",
+			page.Page.Limit, page.Page.Offset, restauranthttp.OperatorMenuPageDefault)
 	}
 
-	document := asRefusal(t, b.get(t, operatorMenu+"?limit=101"), http.StatusBadRequest)
+	overMax := strconv.Itoa(restauranthttp.OperatorMenuPageMax + 1)
+	document := asRefusal(t, b.get(t, operatorMenu+"?limit="+overMax), http.StatusBadRequest)
 
 	if document.Code != "validation_failed" {
 		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)
@@ -351,5 +356,94 @@ func TestStopListMarkWithoutTheMarkItselfIsRefused(t *testing.T) {
 	}
 	if item := b.operatorItemByID(t, added.ID); !item.InStopList {
 		t.Error("позиция снялась со стопа запросом без отметки: пустое тело не значит «есть в наличии»")
+	}
+}
+
+func TestStopListMarkSentAsNullDoesNotTakeTheItemOffTheStopList(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Борщ", Price: 40000, Stock: 5})
+	b.markStopList(t, added.ID, true)
+
+	document := asRefusal(t, b.send(t, http.MethodPut, operatorMenu+"/"+added.ID+"/stop-list",
+		map[string]any{"in_stop_list": nil}), http.StatusBadRequest)
+
+	if document.Code != "validation_failed" {
+		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)
+	}
+	if item := b.operatorItemByID(t, added.ID); !item.InStopList {
+		t.Error("позиция снялась со стопа отметкой null: «поле прислали пустым» — это то же " +
+			"незаполненное поле, а не «есть в наличии»")
+	}
+}
+
+func TestStockSentAsNullDoesNotMakeTheItemUnavailable(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Пирожок", Price: 5000, Stock: 7})
+
+	document := asRefusal(t, b.send(t, http.MethodPut, operatorMenu+"/"+added.ID+"/stock",
+		map[string]any{"stock": nil}), http.StatusBadRequest)
+
+	if document.Code != "validation_failed" {
+		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)
+	}
+	if item := b.operatorItemByID(t, added.ID); item.Stock != 7 {
+		t.Errorf("остаток стал %d, ожидали прежние 7: остаток null обнулил бы позицию молча",
+			item.Stock)
+	}
+}
+
+func TestItemWithPriceSentAsNullDoesNotGetIntoTheMenu(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+
+	document := asRefusal(t, b.send(t, http.MethodPost, operatorMenu,
+		map[string]any{"name": "Стёртая цена", "price": nil, "stock": 1}), http.StatusBadRequest)
+
+	if document.Code != "validation_failed" {
+		t.Errorf("код отказа %q, ожидали validation_failed: цена null — это не бесплатная "+
+			"позиция, а незаполненная форма", document.Code)
+	}
+	if page := b.operatorMenuPage(t, ""); page.Page.Total != 0 {
+		t.Errorf("в меню %d позиций, ожидали ноль", page.Page.Total)
+	}
+}
+
+func TestStockLargerThanTheBoxCanKeepIsRefusedAsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+	added := b.addItem(t, newItem{Name: "Пирожок", Price: 5000, Stock: 2})
+
+	document := asRefusal(t, b.send(t, http.MethodPut, operatorMenu+"/"+added.ID+"/stock",
+		map[string]any{"stock": 3_000_000_000}), http.StatusBadRequest)
+
+	if document.Code != "validation_failed" {
+		t.Errorf("код отказа %q, ожидали validation_failed: опечатка оператора — это "+
+			"неверный запрос, а не отказ службы, который он должен повторить позже", document.Code)
+	}
+	if item := b.operatorItemByID(t, added.ID); item.Stock != 2 {
+		t.Errorf("остаток стал %d, ожидали прежние 2: отклонённая правка ничего не меняет", item.Stock)
+	}
+}
+
+func TestItemWithStockLargerThanTheBoxCanKeepDoesNotGetIntoTheMenu(t *testing.T) {
+	t.Parallel()
+
+	b := newBox(t)
+
+	document := asRefusal(t, b.send(t, http.MethodPost, operatorMenu,
+		map[string]any{"name": "Опечатка в остатке", "price": 10000, "stock": 3_000_000_000}),
+		http.StatusBadRequest)
+
+	if document.Code != "validation_failed" {
+		t.Errorf("код отказа %q, ожидали validation_failed", document.Code)
+	}
+	if page := b.operatorMenuPage(t, ""); page.Page.Total != 0 {
+		t.Errorf("в меню %d позиций, ожидали ноль", page.Page.Total)
 	}
 }

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,9 +24,11 @@ const (
 	// живёт своим циклом, поэтому у него свой сегмент — вложенный, как и папка спеки.
 	OperatorAPIPrefix = PartnerAPIPrefix + "/operator"
 
-	// Границы страницы меню повторяют объявленные в спецификации рабочего места.
-	operatorDefaultPageSize = 20
-	operatorMaxPageSize     = 100
+	// OperatorMenuPageDefault — размер страницы меню, когда оператор не просил своего;
+	// значение сверяется со спецификацией рабочего места тестом.
+	OperatorMenuPageDefault = 20
+	// OperatorMenuPageMax — потолок страницы меню, объявленный спецификацией рабочего места.
+	OperatorMenuPageMax = 100
 )
 
 // operatorAPI — рабочее место оператора заведения: меню, стоп-лист и остатки. Это то,
@@ -66,7 +69,7 @@ func mountOperatorAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
 func (a operatorAPI) ListMenuItems(
 	w http.ResponseWriter, r *http.Request, params operator_v1.ListMenuItemsParams,
 ) {
-	paging, err := httpx.ResolvePaging(params.Limit, params.Offset, operatorDefaultPageSize, operatorMaxPageSize)
+	paging, err := httpx.ResolvePaging(params.Limit, params.Offset, OperatorMenuPageDefault, OperatorMenuPageMax)
 	if err != nil {
 		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
 			"Некорректные параметры запроса", err.Error())
@@ -105,7 +108,7 @@ func (a operatorAPI) AddMenuItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	card, err := domain.NewMenuCard(body.Name, describe(body.Description), domain.Money(body.Price))
+	card, err := domain.NewMenuCard(body.Name, orEmpty(body.Description), domain.Money(body.Price))
 	if err != nil {
 		a.refuse(w, r, err)
 
@@ -138,7 +141,7 @@ func (a operatorAPI) UpdateMenuItem(w http.ResponseWriter, r *http.Request, item
 		return
 	}
 
-	card, err := domain.NewMenuCard(body.Name, describe(body.Description), domain.Money(body.Price))
+	card, err := domain.NewMenuCard(body.Name, orEmpty(body.Description), domain.Money(body.Price))
 	if err != nil {
 		a.refuse(w, r, err)
 
@@ -219,40 +222,44 @@ func (a operatorAPI) SetStock(w http.ResponseWriter, r *http.Request, itemID ope
 // сразу — иначе ему пришлось бы держать правило «нет отметки и остаток больше нуля» в
 // голове и сверять две колонки глазами.
 func operatorCard(item domain.MenuItem) operator_v1.MenuItem {
-	card := operator_v1.MenuItem{
+	return operator_v1.MenuItem{
 		Id:          item.ID,
 		Name:        item.Name,
+		Description: optional(item.Description),
 		Price:       int64(item.Price),
 		Stock:       int(item.Stock),
 		InStopList:  item.InStopList,
 		IsAvailable: item.IsAvailable(),
 	}
-
-	// Описания у позиции может не быть — тогда поля нет и в ответе: пустая строка
-	// сообщила бы, что описание есть и оно пустое.
-	if item.Description != "" {
-		card.Description = &item.Description
-	}
-
-	return card
 }
 
-// describe приводит описание из тела запроса к строке: его могли не прислать вовсе, и
-// «нет описания» и «описание пустое» — для позиции меню одно и то же.
-func describe(description *string) string {
-	if description == nil {
-		return ""
-	}
-
-	return *description
+// badRequestError — тело запроса не разобрать. Отдельный тип, а не отказ предметной
+// области: «прислали не объект JSON» — это сбой транспорта, к правилам меню отношения не
+// имеющий, и путать их значило бы объяснять оператору поломку клиента правилами блюд.
+//
+// Причина — текстом для оператора, без внутренностей службы: имя внутреннего типа, в
+// который службе не удалось разобрать тело, ему ничего не говорит и ничего не даёт
+// исправить.
+type badRequestError struct {
+	// reason — что именно не так с телом, словами для оператора.
+	reason string
 }
 
-// decodeBody разбирает тело запроса и убеждается, что в нём есть перечисленные поля.
+// Error возвращает причину отказа.
+func (e badRequestError) Error() string {
+	return e.reason
+}
+
+// decodeBody разбирает тело запроса и убеждается, что перечисленные поля в нём есть.
 //
 // Обязательность полей объявлена спецификацией, но кодогенератор её не проверяет, а у
 // цены, остатка и отметки стоп-листа значение по умолчанию — осмысленное: запрос без
 // цены завёл бы бесплатную позицию, без остатка — недоступную, а без отметки снял бы
 // позицию со стопа. Об этом оператор узнал бы от покупателя, а не от коробки.
+//
+// Поле со значением `null` — это тоже «поля не прислали», и проверять одно лишь наличие
+// ключа мало: `null` в целевой тип разбирается без ошибки и молча ничего не пишет, то
+// есть даёт ровно то умолчание, ради предотвращения которого проверка и заведена.
 //
 // Неизвестные поля не отвергаются: клиент новее службы не должен ломаться о поле, о
 // котором она ещё не знает, — а всё, что служба обещала принять, описано спецификацией.
@@ -260,22 +267,23 @@ func describe(description *string) string {
 func decodeBody(r *http.Request, body any, required ...string) error {
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
-		return domain.InvalidMenuItemError{Reason: "тело запроса: " + err.Error()}
+		return badRequestError{reason: "тело запроса: прочитать не удалось"}
 	}
 
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return domain.InvalidMenuItemError{Reason: "тело запроса: " + err.Error()}
+		return badRequestError{reason: "тело запроса: ожидается объект JSON"}
 	}
 
 	for _, field := range required {
-		if _, ok := fields[field]; !ok {
+		value, ok := fields[field]
+		if !ok || string(bytes.TrimSpace(value)) == "null" {
 			return domain.InvalidMenuItemError{Reason: field + ": обязательное поле"}
 		}
 	}
 
 	if err := json.Unmarshal(raw, body); err != nil {
-		return domain.InvalidMenuItemError{Reason: "тело запроса: " + err.Error()}
+		return badRequestError{reason: "тело запроса: поле неожиданного типа"}
 	}
 
 	return nil
@@ -285,12 +293,18 @@ func decodeBody(r *http.Request, body any, required ...string) error {
 // отказала сама коробка. Разбор в одном месте — обработчики повторяют не разбор ошибок,
 // а только свой сценарий.
 func (a operatorAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
-	var invalid domain.InvalidMenuItemError
+	var (
+		invalid domain.InvalidMenuItemError
+		bad     badRequestError
+	)
 
 	switch {
 	case errors.Is(err, domain.ErrMenuItemNotFound):
 		writeOperatorProblem(w, r, http.StatusNotFound, operator_v1.MenuItemNotFound,
 			"Позиция не найдена", "позиции с таким идентификатором в меню нет")
+	case errors.As(err, &bad):
+		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
+			"Некорректный запрос", bad.reason)
 	case errors.As(err, &invalid):
 		writeOperatorProblem(w, r, http.StatusBadRequest, operator_v1.ValidationFailed,
 			"Некорректный запрос", invalid.Reason)

@@ -1,3 +1,6 @@
+// Package postgres — хранилище коробки заведения: реализация портов сценариев поверх
+// схемы `restaurant`. SQL живёт здесь и только здесь, поэтому остальной код коробки о
+// том, какой базой он обслуживается, не знает.
 package postgres
 
 import (
@@ -43,17 +46,32 @@ func (m *Menu) Add(ctx context.Context, item domain.MenuItem) error {
 // Порядок задан явно и включает идентификатор: без второго ключа одноимённые позиции
 // переставлялись бы между запросами, и одна и та же попадала бы то на границу страницы
 // дважды, то никуда — площадка, забирающая меню страницами, потеряла бы её из каталога.
+//
+// Счётчик и страница читаются в одной транзакции: запросов два, и без общего снимка
+// позиция, заведённая или удалённая между ними, разводит `total` и выдачу — площадка,
+// решающая по `total`, сколько страниц обойти, запросила бы несуществующую либо
+// остановилась бы, не дочитав меню. Транзакция обходится дёшево: оба запроса read-only и
+// короткие, `REPEATABLE READ` в PostgreSQL — это один снимок на транзакцию, без
+// блокировок и без ожидания чужих.
 func (m *Menu) Page(ctx context.Context, window application.Window) (application.MenuPage, error) {
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return application.MenuPage{}, fmt.Errorf("открыть чтение меню: %w", err)
+	}
+	// Читающая транзакция ничего не меняет, поэтому закрывается откатом: коммитить нечего,
+	// а отпустить снимок нужно в любом случае.
+	defer func() { _ = tx.Rollback() }()
+
 	// Общее число считается отдельным запросом, а не оконной функцией поверх страницы:
 	// страница за концом выдачи не содержит ни одной строки, и вместе со строками
 	// потерялся бы и счётчик — читающий увидел бы «всего 0» там, где позиции есть.
 	var total int64
-	countRow := m.db.QueryRowContext(ctx, `SELECT count(*) FROM restaurant.menu_items`)
+	countRow := tx.QueryRowContext(ctx, `SELECT count(*) FROM restaurant.menu_items`)
 	if err := countRow.Scan(&total); err != nil {
 		return application.MenuPage{}, fmt.Errorf("сосчитать позиции меню: %w", err)
 	}
 
-	rows, err := m.db.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT `+menuItemColumns+`
 		FROM restaurant.menu_items
 		ORDER BY name, id
