@@ -497,7 +497,8 @@ type CancelOrderParams struct {
 // SearchProductsParams defines parameters for SearchProducts.
 type SearchProductsParams struct {
 	// Q Подстрока названия товара. Поиск нечувствителен к регистру; пустая строка равнозначна
-	// отсутствию параметра.
+	// отсутствию параметра. Пробелы по краям отбрасываются — это след ввода, а не часть
+	// названия; предел длины относится к присланному значению, а не к обрезанному.
 	Q *SearchQuery `form:"q,omitempty" json:"q,omitempty"`
 
 	// Limit Размер страницы витрины: по умолчанию 20, максимум 100. Потолок у каждого API свой,
@@ -521,7 +522,8 @@ type ListRestaurantsParams struct {
 // ListRestaurantProductsParams defines parameters for ListRestaurantProducts.
 type ListRestaurantProductsParams struct {
 	// Q Подстрока названия товара. Поиск нечувствителен к регистру; пустая строка равнозначна
-	// отсутствию параметра.
+	// отсутствию параметра. Пробелы по краям отбрасываются — это след ввода, а не часть
+	// названия; предел длины относится к присланному значению, а не к обрезанному.
 	Q *SearchQuery `form:"q,omitempty" json:"q,omitempty"`
 
 	// Limit Размер страницы витрины: по умолчанию 20, максимум 100. Потолок у каждого API свой,

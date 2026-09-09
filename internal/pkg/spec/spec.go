@@ -22,7 +22,8 @@ type PageWindow struct {
 	Max int
 }
 
-// bundle — та часть собранного документа, которая нужна для чтения границ страницы.
+// bundle — та часть собранного документа, которая нужна для чтения объявленных
+// контрактом ограничений на параметры запроса.
 type bundle struct {
 	Components struct {
 		Parameters struct {
@@ -32,20 +33,35 @@ type bundle struct {
 					Maximum int `yaml:"maximum"`
 				} `yaml:"schema"`
 			} `yaml:"Limit"`
+			SearchQuery struct {
+				Schema struct {
+					MaxLength int `yaml:"maxLength"`
+				} `yaml:"schema"`
+			} `yaml:"SearchQuery"`
 		} `yaml:"parameters"`
 	} `yaml:"components"`
 }
 
-// ReadPageWindow читает границы страницы из собранной спецификации по пути path.
-func ReadPageWindow(path string) (PageWindow, error) {
+// readBundle читает и разбирает собранную спецификацию по пути path.
+func readBundle(path string) (bundle, error) {
 	source, err := os.ReadFile(path) //nolint:gosec // путь приходит из теста, а не извне
 	if err != nil {
-		return PageWindow{}, fmt.Errorf("прочитать спецификацию %s: %w", path, err)
+		return bundle{}, fmt.Errorf("прочитать спецификацию %s: %w", path, err)
 	}
 
 	var document bundle
 	if err := yaml.Unmarshal(source, &document); err != nil {
-		return PageWindow{}, fmt.Errorf("разобрать спецификацию %s: %w", path, err)
+		return bundle{}, fmt.Errorf("разобрать спецификацию %s: %w", path, err)
+	}
+
+	return document, nil
+}
+
+// ReadPageWindow читает границы страницы из собранной спецификации по пути path.
+func ReadPageWindow(path string) (PageWindow, error) {
+	document, err := readBundle(path)
+	if err != nil {
+		return PageWindow{}, err
 	}
 
 	window := PageWindow{
@@ -57,4 +73,20 @@ func ReadPageWindow(path string) (PageWindow, error) {
 	}
 
 	return window, nil
+}
+
+// ReadSearchQueryMaxLength читает предел длины поисковой подстроки `q`, объявленный
+// спецификацией по пути path.
+func ReadSearchQueryMaxLength(path string) (int, error) {
+	document, err := readBundle(path)
+	if err != nil {
+		return 0, err
+	}
+
+	maxLength := document.Components.Parameters.SearchQuery.Schema.MaxLength
+	if maxLength == 0 {
+		return 0, fmt.Errorf("в спецификации %s не объявлен maxLength параметра q", path)
+	}
+
+	return maxLength, nil
 }
