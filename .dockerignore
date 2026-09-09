@@ -1,0 +1,6 @@
+.git/
+.data/
+.env
+docs/
+README.md
+Makefile

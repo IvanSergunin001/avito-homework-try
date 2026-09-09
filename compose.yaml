@@ -1,0 +1,67 @@
+# Одна команда поднимает всю площадку: `docker compose up --build`.
+# Значения по умолчанию заданы прямо здесь, поэтому запуск работает и без `.env`;
+# полный список ключей — в `.env.example`.
+name: avito-kitchen
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kitchen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kitchen}
+      POSTGRES_DB: ${POSTGRES_DB:-kitchen}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Данные лежат в каталоге репозитория, а не в томе Docker: полный сброс Docker
+      # (`docker system prune --volumes`, переустановка) их не трогает, и заглянуть в них
+      # можно обычными средствами хоста. У образа postgres:18 данные лежат в подкаталоге
+      # /var/lib/postgresql/<версия>, поэтому монтируется каталог целиком — иначе не
+      # сработает pg_upgrade.
+      - ./.data/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kitchen} -d ${POSTGRES_DB:-kitchen}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  platform:
+    build:
+      context: .
+      args:
+        SERVICE: platform
+    environment:
+      PLATFORM_HTTP_PORT: ${PLATFORM_HTTP_PORT:-8080}
+      PLATFORM_SHUTDOWN_TIMEOUT: ${PLATFORM_SHUTDOWN_TIMEOUT:-10s}
+      PLATFORM_LOG_LEVEL: ${PLATFORM_LOG_LEVEL:-info}
+    ports:
+      - "${PLATFORM_HTTP_PORT:-8080}:${PLATFORM_HTTP_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${PLATFORM_HTTP_PORT:-8080}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  restaurant:
+    build:
+      context: .
+      args:
+        SERVICE: restaurant
+    environment:
+      RESTAURANT_HTTP_PORT: ${RESTAURANT_HTTP_PORT:-8081}
+      RESTAURANT_SHUTDOWN_TIMEOUT: ${RESTAURANT_SHUTDOWN_TIMEOUT:-10s}
+      RESTAURANT_LOG_LEVEL: ${RESTAURANT_LOG_LEVEL:-info}
+    ports:
+      - "${RESTAURANT_HTTP_PORT:-8081}:${RESTAURANT_HTTP_PORT:-8081}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${RESTAURANT_HTTP_PORT:-8081}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
