@@ -106,8 +106,8 @@ package "Схема restaurant — коробка заведения" #F5F0E8 {
     }
 }
 
-restaurants ||--o{ products : "меню живёт вместе с заведением\n(ON DELETE CASCADE)"
-restaurants ||--o{ orders : "без каскада: заведение\nс историей заказов не удаляется"
+restaurants ||--o{ products : "ON DELETE RESTRICT: заведение\nс меню не удаляется, а отключается"
+restaurants ||--o{ orders : "ON DELETE RESTRICT: заведение\nс историей заказов не удаляется"
 orders ||--o{ events
 box_orders ||--o{ queue : "очередь уведомлений площадке"
 menu .. box_orders : "позиции копируются в заказ снимком,\nссылки нет: правка меню не меняет заказ"
