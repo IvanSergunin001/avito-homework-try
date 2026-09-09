@@ -33,7 +33,7 @@ func (a customerAPI) PlaceOrder(
 	if request.Body == nil {
 		return customer_v1.PlaceOrder400ApplicationProblemPlusJSONResponse{
 			BadRequestApplicationProblemPlusJSONResponse: customer_v1.
-				BadRequestApplicationProblemPlusJSONResponse(customerProblem(
+				BadRequestApplicationProblemPlusJSONResponse(customerProblemBody(
 					http.StatusBadRequest, customer_v1.ValidationFailed,
 					"Некорректный запрос", "тело запроса обязательно")),
 		}, nil
@@ -127,17 +127,17 @@ func (a customerAPI) orderRefusal(ctx context.Context, err error) (int, customer
 
 	switch {
 	case errors.As(err, &invalid):
-		return http.StatusBadRequest, customerProblem(http.StatusBadRequest,
+		return http.StatusBadRequest, customerProblemBody(http.StatusBadRequest,
 			customer_v1.ValidationFailed, "Некорректный запрос", invalid.Reason)
 	case errors.Is(err, domain.ErrRestaurantNotFound):
-		return http.StatusNotFound, customerProblem(http.StatusNotFound,
+		return http.StatusNotFound, customerProblemBody(http.StatusNotFound,
 			customer_v1.RestaurantNotFound, "Заведение не найдено",
 			"заведение не существует или больше не работает")
 	case errors.Is(err, domain.ErrProductNotFound):
-		return http.StatusNotFound, customerProblem(http.StatusNotFound,
+		return http.StatusNotFound, customerProblemBody(http.StatusNotFound,
 			customer_v1.ProductNotFound, "Товар не найден", "товара нет в меню этого заведения")
 	case errors.Is(err, domain.ErrOrderNotFound):
-		return http.StatusNotFound, customerProblem(http.StatusNotFound,
+		return http.StatusNotFound, customerProblemBody(http.StatusNotFound,
 			customer_v1.OrderNotFound, "Заказ не найден",
 			"заказа с таким идентификатором у вас нет")
 	case errors.As(err, &unavailable):
@@ -175,12 +175,12 @@ func (a customerAPI) unavailableRestaurantRefusal(
 	a.log.WarnContext(ctx, "restaurant did not accept the order", slog.Any("error", unavailable))
 
 	if unavailable.TimedOut {
-		return http.StatusGatewayTimeout, customerProblem(http.StatusGatewayTimeout,
+		return http.StatusGatewayTimeout, customerProblemBody(http.StatusGatewayTimeout,
 			customer_v1.RestaurantUnavailable, "Заведение не ответило вовремя",
 			"заказ не передан: заведение не ответило за отведённое время")
 	}
 
-	return http.StatusBadGateway, customerProblem(http.StatusBadGateway,
+	return http.StatusBadGateway, customerProblemBody(http.StatusBadGateway,
 		customer_v1.RestaurantUnavailable, "Заведение недоступно",
 		"заказ не передан: заведение не отвечает")
 }
