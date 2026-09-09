@@ -83,9 +83,13 @@ type OrderedProducts interface {
 
 // Orders — хранилище заказов площадки.
 type Orders interface {
-	// Add записывает оформленный заказ. Второй результат отвечает, завела ли площадка
-	// заказ сейчас: ложь означает, что идентификатор уже занят, и отдан заказ, который
-	// его занимает, — чей он и тем ли запросом оформлен, решает предметная область.
+	// Add записывает оформленный заказ вместе с первой записью его журнала. Второй
+	// результат отвечает, завела ли площадка заказ сейчас: ложь означает, что
+	// идентификатор уже занят, и отдан заказ, который его занимает, — чей он и тем ли
+	// запросом оформлен, решает предметная область.
+	//
+	// Первым результатом отдаётся заказ с уже записанным журналом (domain.Order.Recorded):
+	// дальнейшие его переходы допишутся к истории, а не повторят её.
 	//
 	// Отдельного «есть ли уже такой» у хранилища нет намеренно: между вопросом и записью
 	// помещается второе нажатие «Заказать», и обе попытки получили бы ответ «нет».
@@ -241,7 +245,7 @@ func (o *Ordering) Place(ctx context.Context, placement Placement) (domain.Order
 		return domain.Order{}, false, err
 	}
 
-	existing, placed, err := o.orders.Add(ctx, order)
+	stored, placed, err := o.orders.Add(ctx, order)
 	if err != nil {
 		return domain.Order{}, false, err
 	}
@@ -250,10 +254,14 @@ func (o *Ordering) Place(ctx context.Context, placement Placement) (domain.Order
 		// таким, каким он есть сейчас, — либо тем же идентификатором оформляют другой
 		// заказ, и это отказ. Заведение в обоих случаях не тревожат: заказ ему уже
 		// передавали, и второй раз он был бы вторым заказом.
-		repeated, err := existing.Repeat(order)
+		repeated, err := stored.Repeat(order)
 
 		return repeated, false, err
 	}
+
+	// Дальше заказ ведётся тем, что вернуло хранилище: его журнал уже записан, и переходы,
+	// которые случатся с заказом после этого, допишутся к истории, а не повторят её.
+	order = stored
 
 	if err := o.intake.Accept(ctx, partner.BaseURL, order, firstAttempt); err != nil {
 		return domain.Order{}, false, o.refusalOf(ctx, partner, order, err)

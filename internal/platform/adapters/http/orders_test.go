@@ -136,6 +136,10 @@ type customerOrder struct {
 	Total        int64               `json:"total"`
 	CreatedAt    time.Time           `json:"created_at"`
 	UpdatedAt    time.Time           `json:"updated_at"`
+	// CancelledBy и CancellationReason появляются только у отменённого заказа: у
+	// неотменённого этих полей в ответе нет вовсе.
+	CancelledBy        string `json:"cancelled_by"`
+	CancellationReason string `json:"cancellation_reason"`
 }
 
 // customerOrderItem — позиция заказа глазами покупателя.
