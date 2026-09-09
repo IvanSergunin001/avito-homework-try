@@ -151,3 +151,42 @@ func scanProduct(row rowScanner) (domain.Product, error) {
 
 	return product, nil
 }
+
+// Positions отдаёт позиции каталога работающего заведения по идентификаторам товаров.
+//
+// Отбор тот же, что и у витрины: заказать можно только то, что покупатель видит, — товар
+// исчезнувшей позиции или закрывшегося заведения в выдачу не попадает, и заказ на него не
+// соберётся. Товара, которого нет, в выдаче просто нет: чем это обернётся для заказа,
+// решает сценарий, а не запрос к базе.
+func (p *Products) Positions(
+	ctx context.Context, restaurant uuid.UUID, ids []uuid.UUID,
+) ([]application.CatalogPosition, error) {
+	wanted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		wanted = append(wanted, id.String())
+	}
+
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT p.id, p.external_id, p.name, p.price`+fromWorkingRestaurants+`
+		WHERE p.restaurant_id = $1 AND p.id = ANY($2::uuid[]) AND r.is_active AND p.is_active`,
+		restaurant, wanted)
+	if err != nil {
+		return nil, fmt.Errorf("прочитать позиции заказа: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	positions := make([]application.CatalogPosition, 0, len(ids))
+	for rows.Next() {
+		var position application.CatalogPosition
+		if err := rows.Scan(&position.ProductID, &position.ExternalID,
+			&position.Name, &position.Price); err != nil {
+			return nil, fmt.Errorf("прочитать позицию заказа: %w", err)
+		}
+		positions = append(positions, position)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("перебрать позиции заказа: %w", err)
+	}
+
+	return positions, nil
+}

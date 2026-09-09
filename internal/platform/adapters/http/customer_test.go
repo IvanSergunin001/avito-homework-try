@@ -133,11 +133,11 @@ func TestOperationDescribedByContractButNotYetImplementedAnswersNotImplemented(t
 
 	platform := newPlatform(t)
 
-	resp, err := platform.catalog(t).GetOrderWithResponse(context.Background(),
+	resp, err := platform.catalog(t).CancelOrderWithResponse(context.Background(),
 		uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03"),
-		&customer.GetOrderParams{UserId: uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04")})
+		&customer.CancelOrderParams{UserId: uuid.MustParse("018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04")})
 	if err != nil {
-		t.Fatalf("запросить заказ: %v", err)
+		t.Fatalf("отменить заказ: %v", err)
 	}
 
 	document := asRefusal(t, response{
