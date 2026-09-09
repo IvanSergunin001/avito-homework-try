@@ -7,6 +7,7 @@
 ARG GO_VERSION=1.27
 ARG LINT_VERSION=v2.13.2
 ARG REDOCLY_VERSION=2.51.2
+ARG GOOSE_VERSION=v3.28.0
 
 # --- зависимости -------------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS deps
@@ -64,6 +65,81 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM scratch AS api-artifacts
 COPY --from=codegen /src/api /api
 COPY --from=codegen /src/internal /internal
+
+# --- инструмент миграций ------------------------------------------------------
+# goose CLI ставится отдельным бинарём и в бинари служб не попадает: миграции накатывает
+# отдельный шаг запуска, а службе инструмент миграций не нужен — на этом стоит сторож
+# `TestServiceBinariesDoNotCarryTheMigrationTool`. В go.mod goose при этом есть:
+# его библиотеку импортирует тестовая оснастка (`internal/pkg/testdb`), чтобы накатывать
+# в тестах те же миграции. Версия CLI закреплена аргументом (`GOOSE_VERSION`) и держится
+# той же, что у библиотеки в go.mod: тогда тесты и шаг запуска катят одним и тем же goose.
+# На то, что эти две версии не разъехались, стоит сторож
+# `TestTheMigrationToolIsPinnedToTheSameVersionAsItsLibrary`.
+FROM golang:${GO_VERSION}-alpine AS goose
+ARG GOOSE_VERSION
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+
+# --- журналы миграций ---------------------------------------------------------
+# Имя журнала применённых миграций объявлено Go-константой (`VersionTable` в пакете
+# миграций контекста): оттуда его берёт тестовая оснастка, и шаг запуска обязан брать то
+# же самое — иначе тесты и запуск разойдутся по разным журналам молча. Поэтому имя не
+# пишется здесь руками, а вынимается из тех же констант.
+FROM source AS migration-journals
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    mkdir -p /journals \
+ && for context in platform restaurant; do \
+        go run ./internal/tools/migrationjournal "${context}" > "/journals/${context}"; \
+    done
+
+# --- шаг миграций -------------------------------------------------------------
+# Образ с одним бинарём и SQL-файлами: Compose выполняет его до старта служб
+# (`depends_on: service_completed_successfully`), а `make migrate-status` — вручную.
+FROM alpine:3.22 AS migrate
+COPY --from=goose /go/bin/goose /usr/local/bin/goose
+COPY internal/platform/migrations/*.sql /migrations/platform/
+COPY internal/restaurant/migrations/*.sql /migrations/restaurant/
+COPY --from=migration-journals /journals /journals
+# У каждого контекста свой каталог миграций и свой журнал применённых; имя журнала лежит
+# рядом, в /journals/<контекст>, и приходит из Go-константы. Журналы лежат в public,
+# а не в самих схемах: goose создаёт журнал до первой миграции, а первая миграция как раз
+# и создаёт схему.
+COPY <<'SCRIPT' /usr/local/bin/migrate
+#!/bin/sh
+set -eu
+
+# Перечень контекстов повторяется там, где Go не дотягивается: здесь, в стадии
+# `migration-journals`, в значении `context` по умолчанию (Makefile) и в таблице
+# контекстов (README.md). Третий контекст правится во всех этих местах разом, и в
+# `migrationSets` (internal/pkg/testdb) тоже.
+for context in platform restaurant; do
+	echo "== ${context}: goose $*"
+	goose -table "$(cat "/journals/${context}")" -dir "/migrations/${context}" "$@"
+done
+SCRIPT
+RUN chmod +x /usr/local/bin/migrate
+ENTRYPOINT ["/usr/local/bin/migrate"]
+CMD ["up"]
+
+# --- заготовка новой миграции -------------------------------------------------
+# `make migration name=...` создаёт файл тем же инструментом, которым миграции
+# накатываются, и выгружает его в рабочее дерево: нумерация продолжает уже имеющуюся,
+# а шаблон не расходится с тем, что goose ожидает прочитать.
+FROM goose AS migration-draft
+ARG MIGRATION_CONTEXT=platform
+ARG MIGRATION_NAME
+WORKDIR /work
+COPY internal/${MIGRATION_CONTEXT}/migrations/*.sql /existing/
+RUN test -n "${MIGRATION_NAME}" || { echo "нужно имя миграции: make migration name=..."; exit 1; } \
+ && cp /existing/*.sql /work/ \
+ && goose -s -dir /work create "${MIGRATION_NAME}" sql \
+ && mkdir -p "/out/internal/${MIGRATION_CONTEXT}/migrations" \
+ && for file in /work/*.sql; do \
+        [ -f "/existing/$(basename "${file}")" ] || cp "${file}" "/out/internal/${MIGRATION_CONTEXT}/migrations/"; \
+    done
+
+FROM scratch AS new-migration
+COPY --from=migration-draft /out /
 
 # --- сборка службы -----------------------------------------------------------
 FROM source AS build
