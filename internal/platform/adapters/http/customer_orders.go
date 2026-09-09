@@ -144,6 +144,46 @@ func (a customerAPI) GetOrder(
 	return customer_v1.GetOrder200JSONResponse(orderDocument(order)), nil
 }
 
+// CancelOrder отменяет заказ по требованию покупателя.
+//
+// Тела у запроса нет: причину покупатель не называет — он передумал, и объяснять это
+// никому не обязан. Ответ — сам заказ: по нему видно и то, что он отменён, и то, кем, —
+// если отмена случилась раньше и не по воле покупателя.
+//
+// Повторная отмена отвечает тем же `200` и тем же заказом: ретрай кнопки «Отменить» не
+// должен ломаться. Заказ, который уже готовят, отменить нельзя — `409` с кодом
+// `order_not_cancellable`: продукты потрачены, и такие случаи разбирает саппорт.
+func (a customerAPI) CancelOrder(
+	ctx context.Context, request customer_v1.CancelOrderRequestObject,
+) (customer_v1.CancelOrderResponseObject, error) {
+	order, err := a.cancellation.ByCustomer(ctx, request.OrderId, request.Params.UserId)
+	if err != nil {
+		status, body := a.orderRefusal(ctx, err)
+
+		switch status {
+		case http.StatusBadRequest:
+			return customer_v1.CancelOrder400ApplicationProblemPlusJSONResponse{
+				BadRequestApplicationProblemPlusJSONResponse: customer_v1.
+					BadRequestApplicationProblemPlusJSONResponse(customerProblemBase(body)),
+			}, nil
+		case http.StatusNotFound:
+			return customer_v1.CancelOrder404ApplicationProblemPlusJSONResponse{
+				NotFoundApplicationProblemPlusJSONResponse: customer_v1.
+					NotFoundApplicationProblemPlusJSONResponse(customerProblemBase(body)),
+			}, nil
+		case http.StatusConflict:
+			return customer_v1.CancelOrder409ApplicationProblemPlusJSONResponse{
+				ConflictApplicationProblemPlusJSONResponse: customer_v1.
+					ConflictApplicationProblemPlusJSONResponse(body),
+			}, nil
+		default:
+			return nil, err
+		}
+	}
+
+	return customer_v1.CancelOrder200JSONResponse(orderDocument(order)), nil
+}
+
 // orderRefusal переводит ошибку сценария заказа в код ответа и тело `problem+json`.
 //
 // Разбор ошибок стоит отдельно от обработчиков, а тип ответа собирает каждый из них сам:
@@ -156,6 +196,7 @@ func (a customerAPI) orderRefusal(ctx context.Context, err error) (int, customer
 	var (
 		invalid     domain.InvalidOrderError
 		refused     domain.OrderRefusedError
+		transition  domain.OrderTransitionError
 		unavailable application.RestaurantUnavailableError
 	)
 
@@ -176,6 +217,15 @@ func (a customerAPI) orderRefusal(ctx context.Context, err error) (int, customer
 			"заказа с таким идентификатором у вас нет"))
 	case errors.As(err, &refused):
 		return a.restaurantRefusal(ctx, refused)
+	case errors.As(err, &transition) && transition.To == domain.Cancelled:
+		// Единственный переход, которого требует покупатель, — отмена: других ручек,
+		// двигающих заказ, на клиентской поверхности нет. Отказ матрицы в ней означает
+		// одно и то же: заказ уже готовят, и продукты на него потрачены. Названный
+		// переход в условии — не перестраховка: отказ в каком-нибудь другом переходе
+		// был бы поломкой самой площадки, и выдавать её покупателю за правило нельзя.
+		return http.StatusConflict, customerFailure(customerProblemBody(http.StatusConflict,
+			customer_v1.OrderNotCancellable, "Заказ уже нельзя отменить",
+			"заведение начало готовить заказ: продукты потрачены — обратитесь в поддержку"))
 	case errors.Is(err, domain.ErrIdempotencyKeyReuse):
 		return http.StatusUnprocessableEntity, customerFailure(customerProblemBody(
 			http.StatusUnprocessableEntity, customer_v1.IdempotencyKeyReuse,

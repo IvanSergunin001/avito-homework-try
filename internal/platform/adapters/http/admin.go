@@ -19,8 +19,8 @@ import (
 // здесь только то, что в ней вынесено в адрес сервера.
 const AdminAPIPrefix = "/api/kitchen/v1/admin"
 
-// adminAPI обслуживает админское API площадки: подключение заведений и правку их
-// реквизитов.
+// adminAPI обслуживает админское API площадки: подключение заведений, правку их
+// реквизитов и отмену заказа саппортом.
 //
 // Защиты у этого API в MVP нет — так же, как её нет у клиентского: сотрудник называет
 // себя тем же заголовком `User-Id`, что и покупатель. Это решение, а не упущение: цена
@@ -31,15 +31,19 @@ const AdminAPIPrefix = "/api/kitchen/v1/admin"
 // Операции, до которых очередь ещё не дошла, отвечают `ErrNotImplemented`: маршрут
 // существует потому, что существует контракт, а обработчик подставляется на своём этапе.
 type adminAPI struct {
-	onboarding *application.Onboarding
-	log        *slog.Logger
+	onboarding   *application.Onboarding
+	cancellation *application.Cancellation
+	log          *slog.Logger
 }
 
 // mountAdminAPI монтирует админское API на роутер площадки. Список маршрутов целиком
 // сгенерирован по спецификации: руками он не переписывается и разойтись с контрактом
 // не может.
-func mountAdminAPI(r chi.Router, onboarding *application.Onboarding, log *slog.Logger) {
-	api := adminAPI{onboarding: onboarding, log: log}
+func mountAdminAPI(
+	r chi.Router, onboarding *application.Onboarding,
+	cancellation *application.Cancellation, log *slog.Logger,
+) {
+	api := adminAPI{onboarding: onboarding, cancellation: cancellation, log: log}
 
 	handler := admin_v1.NewStrictHandlerWithOptions(api, nil, admin_v1.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  adminProblems.BadRequest,
@@ -140,14 +144,6 @@ func (a adminAPI) UpdateRestaurant(
 		CreatedAt: partner.CreatedAt,
 		UpdatedAt: partner.UpdatedAt,
 	}, nil
-}
-
-// Отмена заказа саппортом описана контрактом, её обработчик подставляется своим этапом.
-
-func (adminAPI) CancelOrderBySupport(
-	context.Context, admin_v1.CancelOrderBySupportRequestObject,
-) (admin_v1.CancelOrderBySupportResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
 }
 
 // adminProblemBody собирает тело отказа админского API — общую основу `problem+json`.

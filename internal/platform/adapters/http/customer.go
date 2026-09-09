@@ -47,10 +47,11 @@ const (
 // Операции, до которых очередь ещё не дошла, отвечают `ErrNotImplemented`: маршрут
 // существует потому, что существует контракт, а обработчик подставляется на своём этапе.
 type customerAPI struct {
-	showcase *application.Showcase
-	catalog  *application.Catalog
-	ordering *application.Ordering
-	log      *slog.Logger
+	showcase     *application.Showcase
+	catalog      *application.Catalog
+	ordering     *application.Ordering
+	cancellation *application.Cancellation
+	log          *slog.Logger
 }
 
 // mountCustomerAPI монтирует клиентское API на роутер площадки. Список маршрутов целиком
@@ -61,9 +62,13 @@ func mountCustomerAPI(
 	showcase *application.Showcase,
 	catalog *application.Catalog,
 	ordering *application.Ordering,
+	cancellation *application.Cancellation,
 	log *slog.Logger,
 ) {
-	api := customerAPI{showcase: showcase, catalog: catalog, ordering: ordering, log: log}
+	api := customerAPI{
+		showcase: showcase, catalog: catalog, ordering: ordering,
+		cancellation: cancellation, log: log,
+	}
 
 	handler := customer_v1.NewStrictHandlerWithOptions(api, nil, customer_v1.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  customerProblems.BadRequest,
@@ -215,14 +220,6 @@ func (a customerAPI) GetProduct(
 	}
 
 	return customer_v1.GetProduct200JSONResponse(productCard(product)), nil
-}
-
-// Операции ниже описаны контрактом, но их обработчики подставляются своими этапами.
-
-func (customerAPI) CancelOrder(
-	context.Context, customer_v1.CancelOrderRequestObject,
-) (customer_v1.CancelOrderResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
 }
 
 // productSearch — разобранные параметры выдачи товаров.

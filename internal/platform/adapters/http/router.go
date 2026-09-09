@@ -49,13 +49,18 @@ func NewRouter(
 	// Продвижение заказа — самостоятельный сценарий над тем же хранилищем: заказ двигают
 	// уведомления заведения, а не оформление, которое к этому моменту давно закончилось.
 	progress := application.NewProgress(orders, log)
+	// Отмена — тоже самостоятельный сценарий: она не спрашивает заведение, а сообщает
+	// ему решение площадки, и ждать коробку ей столько же, сколько ждёт её переданный
+	// заказ, — по ту сторону экрана в обоих случаях стоит человек.
+	cancellation := application.NewCancellation(restaurants, orders,
+		restaurant_client.NewOrderCancellations(timeouts.OrderPlacement), log)
 	access := guard{gate: application.NewGatekeeper(restaurants), log: log}
 
 	r := httpx.NewRouter(log)
 
-	mountCustomerAPI(r, showcase, catalog, ordering, log)
+	mountCustomerAPI(r, showcase, catalog, ordering, cancellation, log)
 	mountPartnerAPI(r, access, catalogSync, progress, log)
-	mountAdminAPI(r, onboarding, log)
+	mountAdminAPI(r, onboarding, cancellation, log)
 
 	return r, catalogSync
 }

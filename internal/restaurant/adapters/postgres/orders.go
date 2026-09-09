@@ -16,7 +16,7 @@ import (
 
 // orderColumns — поля заказа в том порядке, в каком их читает scanOrder.
 const orderColumns = `id, platform_order_id, idempotency_key, status, address, items, total,
-	cancellation_reason, placed_at, accepted_at`
+	cancellation_reason, placed_at, accepted_at, updated_at`
 
 // Orders — входящие заказы коробки в схеме `restaurant`.
 //
@@ -181,6 +181,70 @@ func (o *Orders) Reject(
 	ctx context.Context, id uuid.UUID, decide func(order *domain.Order) error,
 ) (domain.Order, error) {
 	return o.review(ctx, id, decide, restoreStock)
+}
+
+// Cancel отменяет заказ, о котором просит площадка.
+//
+// Заказ ищется по идентификатору площадки: собственная нумерация коробки ей неизвестна,
+// и в партнёрском контракте заказ называется тем идентификатором, которым его передавали.
+//
+// Решение принимает предметная область, и её ответ «ничего не изменилось» — это не
+// пустая запись, а повтор просьбы: заказ уже отменён, и записывать по второму разу
+// нечего, а вернуть остатки второй раз означало бы выдумать продукты, которых нет.
+func (o *Orders) Cancel(
+	ctx context.Context, platformOrderID uuid.UUID, decide func(order *domain.Order) (bool, error),
+) (domain.Order, error) {
+	tx, err := o.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("начать отмену заказа %s: %w", platformOrderID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Заказ читается под блокировкой по той же причине, что и при решении оператора:
+	// между чтением и записью помещается нажатие «в доставку» с рабочего места, и без
+	// блокировки отмена и продвижение перезаписали бы друг друга.
+	order, err := scanOrder(tx.QueryRowContext(ctx,
+		`SELECT `+orderColumns+` FROM restaurant.orders WHERE platform_order_id = $1 FOR UPDATE`,
+		platformOrderID))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return domain.Order{}, domain.ErrOrderNotFound
+	case err != nil:
+		return domain.Order{}, fmt.Errorf("прочитать заказ %s: %w", platformOrderID, err)
+	}
+
+	cancelled, err := decide(&order)
+	if err != nil {
+		return domain.Order{}, err
+	}
+	if !cancelled {
+		return order, nil
+	}
+
+	// Момент отмены ставит база — тем же `now()`, что и всякую смену состояния в коробке,
+	// — и тут же отдаётся обратно: он уезжает площадке в подтверждении отмены, и брать
+	// его с часов службы значило бы обещать ей время, отличное от записанного.
+	err = tx.QueryRowContext(ctx, `
+		UPDATE restaurant.orders
+		SET status = $2, cancellation_reason = $3, updated_at = now()
+		WHERE id = $1
+		RETURNING updated_at`, order.ID, string(order.Status), order.CancellationReason).
+		Scan(&order.UpdatedAt)
+	if err != nil {
+		return domain.Order{}, fmt.Errorf("записать отмену заказа %s: %w", order.ID, err)
+	}
+
+	// Продукты на отменённый заказ не потрачены — отменить его коробка соглашается
+	// только до начала готовки, — и позиции снова продаются.
+	if err := restoreStock(ctx, tx, order); err != nil {
+		return domain.Order{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.Order{}, fmt.Errorf("отменить заказ %s: %w", order.ID, err)
+	}
+
+	return order, nil
 }
 
 // review применяет решение оператора к заказу: читает заказ под блокировкой, отдаёт его
@@ -461,7 +525,8 @@ func scanOrder(row rowScanner) (domain.Order, error) {
 	)
 
 	err := row.Scan(&order.ID, &order.PlatformOrderID, &order.IdempotencyKey, &status,
-		&order.Address, &items, &total, &order.CancellationReason, &placed, &order.AcceptedAt)
+		&order.Address, &items, &total, &order.CancellationReason, &placed,
+		&order.AcceptedAt, &order.UpdatedAt)
 	if err != nil {
 		return domain.Order{}, err
 	}
