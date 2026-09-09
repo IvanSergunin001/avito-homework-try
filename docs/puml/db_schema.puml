@@ -1,0 +1,127 @@
+' Схема БД обоих контекстов. Исходник диаграммы; картинка рождается из него командой
+' `make diagrams`. Источник истины — миграции (`internal/*/migrations`); диаграмма
+' пересобирается вместе с ними и показывает то же самое человеку.
+@startuml db_schema
+hide circle
+skinparam linetype ortho
+skinparam wrapWidth 300
+
+title Схема БД: два контекста, ни одного внешнего ключа между ними
+
+package "Схема platform — площадка" #EAF2FA {
+    entity "platform.restaurants" as restaurants {
+        * id : uuid <<PK>>
+        --
+        * name : text
+        * base_url : text
+        * api_key_hash : text <<UQ, SHA-256>>
+        * is_active : boolean
+        last_synced_at : timestamptz
+        * created_at : timestamptz
+    }
+
+    entity "platform.products" as products {
+        * id : uuid <<PK>>
+        --
+        * restaurant_id : uuid <<FK>>
+        * external_id : text
+        * name : text
+        * description : text
+        * price : bigint <<копейки>>
+        * is_available : boolean <<стоп-лист заведения>>
+        * is_active : boolean <<исчезла из выгрузки>>
+        * updated_at : timestamptz
+        * created_at : timestamptz
+        --
+        UNIQUE (restaurant_id, external_id)
+        GIN (name) — поиск по подстроке
+    }
+
+    entity "platform.orders" as orders {
+        * id : uuid <<PK, uuid v7 от клиента, он же ключ идемпотентности>>
+        --
+        * customer_id : uuid <<из заголовка User-Id, таблицы покупателей нет>>
+        * restaurant_id : uuid <<FK>>
+        * status : text <<pending … completed, cancelled>>
+        * address : text
+        * items : jsonb <<снимок позиций: имя, цена, количество>>
+        * total : bigint <<копейки, считает площадка>>
+        * request_hash : text <<отпечаток запроса>>
+        * cancelled_by : text <<'', customer, restaurant, support>>
+        * cancellation_reason : text
+        * created_at : timestamptz
+        * updated_at : timestamptz
+    }
+
+    entity "platform.order_status_events" as events {
+        * id : bigint <<PK, identity>>
+        --
+        * order_id : uuid <<FK>>
+        * status : text
+        * actor : text <<customer, restaurant, support>>
+        * occurred_at : timestamptz <<часы площадки>>
+    }
+}
+
+package "Схема restaurant — коробка заведения" #F5F0E8 {
+    entity "restaurant.menu_items" as menu {
+        * id : uuid <<PK, он же внешний идентификатор для площадки>>
+        --
+        * name : text
+        * description : text
+        * price : bigint <<копейки>>
+        * stock : integer <<остаток>>
+        * in_stop_list : boolean
+        * created_at : timestamptz
+        --
+        доступность не хранится: не в стоп-листе и остаток > 0
+    }
+
+    entity "restaurant.orders" as box_orders {
+        * id : uuid <<PK>>
+        --
+        * platform_order_id : uuid <<заказ на площадке>>
+        * idempotency_key : uuid <<UQ, им узнаётся повтор>>
+        * status : text <<under_review … completed, cancelled>>
+        * address : text
+        * items : jsonb <<снимок позиций>>
+        * total : bigint <<копейки, посчитала площадка>>
+        * cancellation_reason : text
+        placed_at : timestamptz <<если площадка сказала>>
+        * accepted_at : timestamptz
+        * updated_at : timestamptz
+    }
+
+    entity "restaurant.status_notifications" as queue {
+        * order_id : uuid <<PK, FK>>
+        * status : text <<PK: в каждое состояние заказ приходит один раз>>
+        --
+        * reason : text
+        * occurred_at : timestamptz
+        * attempts : integer
+        * next_attempt_at : timestamptz
+        delivered_at : timestamptz
+        failed_at : timestamptz <<попытки кончились>>
+        * last_error : text
+    }
+}
+
+restaurants ||--o{ products : "ON DELETE RESTRICT: заведение\nс меню не удаляется, а отключается"
+restaurants ||--o{ orders : "ON DELETE RESTRICT: заведение\nс историей заказов не удаляется"
+orders ||--o{ events
+box_orders ||--o{ queue : "очередь уведомлений площадке"
+menu .. box_orders : "позиции копируются в заказ снимком,\nссылки нет: правка меню не меняет заказ"
+
+orders .. box_orders : "один и тот же идентификатор заказа\n(platform_order_id, idempotency_key),\nно не внешний ключ: это контракт двух\nорганизаций, а не связь в базе"
+
+note as instances
+  На демо-стенде обе схемы лежат в одном инстансе PostgreSQL — это экономия
+  на инфраструктуре демо, а не решение о хранении. В эксплуатации инстанс
+  у каждой службы свой: заведение — другая организация, и общая база означала
+  бы, что партнёр физически дотягивается до данных площадки. Поэтому между
+  схемами нет ни одного внешнего ключа: граница контекстов держится тем,
+  что её нечем нарушить.
+end note
+instances .. orders
+instances .. box_orders
+@enduml
