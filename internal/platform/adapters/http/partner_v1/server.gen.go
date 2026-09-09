@@ -81,6 +81,7 @@ const (
 	ProblemCodeForbidden             ProblemCode = "forbidden"
 	ProblemCodeIdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
 	ProblemCodeInternalError         ProblemCode = "internal_error"
+	ProblemCodeMenuItemNotFound      ProblemCode = "menu_item_not_found"
 	ProblemCodeNotImplemented        ProblemCode = "not_implemented"
 	ProblemCodeOrderNotCancellable   ProblemCode = "order_not_cancellable"
 	ProblemCodeOrderNotFound         ProblemCode = "order_not_found"
@@ -103,6 +104,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeIdempotencyKeyReuse:
 		return true
 	case ProblemCodeInternalError:
+		return true
+	case ProblemCodeMenuItemNotFound:
 		return true
 	case ProblemCodeNotImplemented:
 		return true

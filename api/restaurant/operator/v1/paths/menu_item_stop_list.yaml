@@ -1,0 +1,31 @@
+put:
+  operationId: setStopListMark
+  summary: Отметить позицию в стоп-листе или снять отметку
+  description: |
+    Отметка и её снятие — одна операция с булевым значением, а не две ручки: состояние у
+    позиции одно, и повторный вызов с тем же значением ничего не меняет.
+
+    Позиция в стоп-листе остаётся в меню, но уезжает площадке недоступной: убрать её из
+    выдачи вместо этого нельзя — покупатель искал бы блюдо, которое вчера видел, и не
+    находил его без объяснения.
+  tags:
+    - menu
+  parameters:
+    - $ref: '../components/parameters.yaml#/MenuItemId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../components/schemas.yaml#/StopListMark'
+  responses:
+    '200':
+      description: Отметка выставлена.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas.yaml#/MenuItem'
+    '400':
+      $ref: '../../../../common/v1/components/responses.yaml#/BadRequest'
+    '404':
+      $ref: '../../../../common/v1/components/responses.yaml#/NotFound'

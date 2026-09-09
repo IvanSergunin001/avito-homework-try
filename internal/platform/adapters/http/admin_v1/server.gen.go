@@ -75,6 +75,7 @@ const (
 	Forbidden             ProblemCode = "forbidden"
 	IdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
 	InternalError         ProblemCode = "internal_error"
+	MenuItemNotFound      ProblemCode = "menu_item_not_found"
 	NotImplemented        ProblemCode = "not_implemented"
 	OrderNotCancellable   ProblemCode = "order_not_cancellable"
 	OrderNotFound         ProblemCode = "order_not_found"
@@ -97,6 +98,8 @@ func (e ProblemCode) Valid() bool {
 	case IdempotencyKeyReuse:
 		return true
 	case InternalError:
+		return true
+	case MenuItemNotFound:
 		return true
 	case NotImplemented:
 		return true

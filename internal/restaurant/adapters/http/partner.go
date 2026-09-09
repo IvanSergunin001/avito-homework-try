@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -11,6 +12,8 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	"github.com/IvanSergunin001/Test157/internal/pkg/problem"
 	"github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http/partner_v1"
+	"github.com/IvanSergunin001/Test157/internal/restaurant/application"
+	"github.com/IvanSergunin001/Test157/internal/restaurant/domain"
 )
 
 const (
@@ -25,25 +28,34 @@ const (
 	// MenuPageMax — потолок страницы меню, объявленный партнёрским контрактом.
 	MenuPageMax = 500
 
-	// maxRequestBodyBytes — потолок на тело входящего запроса. Заказ, который приносит
-	// площадка, — это список позиций корзины, и мегабайта ему хватает с запасом; всё, что
-	// больше, коробка не разбирает, а отклоняет: тело неограниченного размера читается в
-	// память до того, как хоть одно правило успеет сказать, что запрос неверен.
+	// maxRequestBodyBytes — потолок на тело входящего запроса, один на обе поверхности
+	// коробки. Заказ от площадки — это список позиций корзины, позиция меню от оператора —
+	// название, описание и два числа: мегабайта хватает с запасом и тому, и другому. Всё,
+	// что больше, коробка не разбирает, а отклоняет: тело неограниченного размера читается
+	// в память до того, как хоть одно правило успеет сказать, что запрос неверен.
 	maxRequestBodyBytes = 1 * httpx.MB
 )
 
 // partnerAPI обслуживает в коробке ту половину партнёрского контракта, которую обязано
 // реализовать заведение. Коробка сдаёт тот же экзамен, что и заведение со своей системой:
 // интерфейс сгенерирован по общему документу контракта.
-type partnerAPI struct{}
+//
+// Операции, до которых очередь ещё не дошла, отвечают `ErrNotImplemented`: маршрут
+// существует потому, что существует контракт, а обработчик подставляется на своём этапе.
+type partnerAPI struct {
+	menu *application.Menu
+	log  *slog.Logger
+}
 
 // mountPartnerAPI монтирует партнёрский контракт на роутер коробки. Список маршрутов
 // целиком сгенерирован по спецификации: руками он не переписывается и разойтись
 // с контрактом не может.
-func mountPartnerAPI(r chi.Router) {
-	handler := partner_v1.NewStrictHandlerWithOptions(partnerAPI{}, nil, partner_v1.StrictHTTPServerOptions{
+func mountPartnerAPI(r chi.Router, menu *application.Menu, log *slog.Logger) {
+	api := partnerAPI{menu: menu, log: log}
+
+	handler := partner_v1.NewStrictHandlerWithOptions(api, nil, partner_v1.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writePartnerRequestProblem,
-		ResponseErrorHandlerFunc: writePartnerResponseProblem,
+		ResponseErrorHandlerFunc: api.writePartnerResponseProblem,
 	})
 
 	// Лимит тела стоит перед сгенерированными маршрутами: размер тела проверяется раньше
@@ -62,13 +74,14 @@ func mountPartnerAPI(r chi.Router) {
 	})
 }
 
-// ListMenu отдаёт страницу меню заведения.
+// ListMenu отдаёт страницу меню заведения по партнёрскому контракту.
 //
-// Хранилище коробки появляется на своём этапе, поэтому меню пока пусто. Пустая страница —
-// не заглушка: это ровно тот ответ, который контракт обещает заведению, ещё не заведшему
-// ни одной позиции.
-func (partnerAPI) ListMenu(
-	_ context.Context, request partner_v1.ListMenuRequestObject,
+// Наружу уезжает меньше, чем видит оператор: остаток и отметка стоп-листа — внутренняя
+// кухня заведения, площадке достаточно ответа «заказать можно или нельзя». Позиция,
+// которой нет, из выдачи не пропадает: покупатель искал бы блюдо, которое вчера видел,
+// и не находил его без объяснения.
+func (a partnerAPI) ListMenu(
+	ctx context.Context, request partner_v1.ListMenuRequestObject,
 ) (partner_v1.ListMenuResponseObject, error) {
 	paging, err := httpx.ResolvePaging(
 		request.Params.Limit, request.Params.Offset, MenuPageDefault, MenuPageMax)
@@ -79,11 +92,24 @@ func (partnerAPI) ListMenu(
 		}, nil
 	}
 
+	// Синхронизация каталога от неудачного ответа не страдает: выгрузка применяется
+	// целиком, и незаконченная оставляет площадке прежний каталог.
+	page, err := a.menu.Page(ctx, application.Window{Limit: paging.Limit, Offset: paging.Offset})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]partner_v1.MenuItem, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, contractItem(item))
+	}
+
 	return partner_v1.ListMenu200JSONResponse{
-		Items: []partner_v1.MenuItem{},
+		Items: items,
 		Page: partner_v1.PageMeta{
 			Limit:  paging.Limit,
 			Offset: paging.Offset,
+			Total:  page.Total,
 		},
 	}, nil
 }
@@ -102,19 +128,39 @@ func (partnerAPI) CancelAcceptedOrder(
 	return nil, httpx.ErrNotImplemented
 }
 
-// partnerValidationProblem собирает отказ по неверному запросу. Тело — общая основа
-// `problem+json`: своих полей контракту на `400` добавить нечего, и тип сгенерирован по
-// спецификации, поэтому ответ не может разойтись с тем, что обещано заведению.
-func partnerValidationProblem(err error) partner_v1.ProblemBase {
-	detail := err.Error()
+// contractItem переводит позицию меню в схему партнёрского контракта.
+//
+// Цена уезжает тем же целым числом копеек, каким хранится: перевод в дробное число по
+// дороге означал бы, что у коробки и у витрины разные деньги.
+func contractItem(item domain.MenuItem) partner_v1.MenuItem {
+	return partner_v1.MenuItem{
+		ExternalId:  item.ExternalID(),
+		Name:        item.Name,
+		Description: optional(item.Description),
+		Price:       int64(item.Price),
+		IsAvailable: item.IsAvailable(),
+	}
+}
 
+// partnerProblem собирает отказ партнёрского контракта. Тело — общая основа
+// `problem+json`: своих полей у этих отказов нет, а тип сгенерирован по спецификации,
+// поэтому ответ не может разойтись с тем, что обещано заведению.
+func partnerProblem(
+	status int, code partner_v1.ProblemCode, title, detail string,
+) partner_v1.ProblemBase {
 	return partner_v1.ProblemBase{
 		Type:   problem.DefaultType,
-		Title:  "Некорректные параметры запроса",
-		Status: http.StatusBadRequest,
+		Title:  title,
+		Status: status,
 		Detail: &detail,
-		Code:   partner_v1.ValidationFailed,
+		Code:   code,
 	}
+}
+
+// partnerValidationProblem собирает отказ по неверному запросу.
+func partnerValidationProblem(err error) partner_v1.ProblemBase {
+	return partnerProblem(http.StatusBadRequest, partner_v1.ValidationFailed,
+		"Некорректные параметры запроса", err.Error())
 }
 
 // writePartnerRequestProblem отвечает на неразобранный запрос — неверный uuid в пути,
@@ -152,20 +198,21 @@ func refuseOversizedPartnerBody(w http.ResponseWriter, r *http.Request) {
 
 // writePartnerResponseProblem отвечает, когда обработчик вернул ошибку. Операция,
 // описанная контрактом, но ещё не реализованная, — это `501`; всё остальное `500`.
-func writePartnerResponseProblem(w http.ResponseWriter, r *http.Request, err error) {
-	status, title, code := http.StatusInternalServerError, "Внутренняя ошибка коробки",
-		partner_v1.InternalError
+//
+// Причина отказа по вине коробки уходит в лог, а не площадке: наружу она рассказала бы об
+// устройстве коробки, а выбрать по ней ветку поведения площадка всё равно не может.
+func (a partnerAPI) writePartnerResponseProblem(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, httpx.ErrNotImplemented) {
-		status, title, code = http.StatusNotImplemented, "Операция ещё не реализована",
-			partner_v1.NotImplemented
+		problem.Write(r.Context(), w, http.StatusNotImplemented, partnerProblem(
+			http.StatusNotImplemented, partner_v1.NotImplemented,
+			"Операция ещё не реализована", err.Error()))
+
+		return
 	}
 
-	detail := err.Error()
-	problem.Write(r.Context(), w, status, partner_v1.ProblemBase{
-		Type:   problem.DefaultType,
-		Title:  title,
-		Status: status,
-		Detail: &detail,
-		Code:   code,
-	})
+	a.log.ErrorContext(r.Context(), "menu request failed", slog.Any("error", err))
+
+	problem.Write(r.Context(), w, http.StatusInternalServerError, partnerProblem(
+		http.StatusInternalServerError, partner_v1.InternalError,
+		"Внутренняя ошибка коробки", "повторите запрос позже"))
 }

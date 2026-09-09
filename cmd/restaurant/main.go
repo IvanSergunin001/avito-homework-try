@@ -11,6 +11,7 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/config"
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
+	"github.com/IvanSergunin001/Test157/internal/pkg/postgres"
 	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http"
 )
 
@@ -37,5 +38,12 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return httpx.Serve(ctx, log, cfg, restauranthttp.NewRouter(log))
+	// Схему накатывает отдельный шаг запуска, а служба только подключается к готовой базе.
+	db, err := postgres.Open(ctx, cfg.DatabaseDSN)
+	if err != nil {
+		return err
+	}
+	defer postgres.CloseQuietly(ctx, log, db)
+
+	return httpx.Serve(ctx, log, cfg, restauranthttp.NewRouter(log, db))
 }

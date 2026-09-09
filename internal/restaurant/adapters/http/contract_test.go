@@ -24,3 +24,23 @@ func TestMenuPageWindowMatchesTheContract(t *testing.T) {
 			window.Max, restauranthttp.MenuPageMax)
 	}
 }
+
+// TestOperatorMenuPageWindowMatchesTheSpecification — та же сверка для рабочего места
+// оператора: границы объявлены его спецификацией, а подставляет их коробка. Поверхностей
+// у коробки две, и выпасть из правила не должна ни одна — иначе правка спецификации
+// разошлась бы с кодом молча.
+func TestOperatorMenuPageWindowMatchesTheSpecification(t *testing.T) {
+	window, err := spec.ReadPageWindow("../../../../api/restaurant/operator/v1/bundle.yaml")
+	if err != nil {
+		t.Fatalf("прочитать границы страницы из спецификации оператора: %v", err)
+	}
+
+	if window.Default != restauranthttp.OperatorMenuPageDefault {
+		t.Errorf("спецификация обещает страницу по умолчанию %d, коробка подставляет %d",
+			window.Default, restauranthttp.OperatorMenuPageDefault)
+	}
+	if window.Max != restauranthttp.OperatorMenuPageMax {
+		t.Errorf("спецификация обещает потолок страницы %d, коробка держит %d",
+			window.Max, restauranthttp.OperatorMenuPageMax)
+	}
+}

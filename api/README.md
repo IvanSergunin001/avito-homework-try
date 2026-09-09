@@ -1,6 +1,7 @@
 # Контракты
 
-Четыре папки: три API — клиентское, партнёрское и админское — и `common` с тем, что у них
+Папки по документам: клиентское, партнёрское и админское API площадки, рабочее место
+оператора коробки (`restaurant/operator` — как и в пути) и `common` с тем, что у них
 общее. Внутри каждой — версия папкой (`v1`), источник спецификации (`openapi.yaml`,
 `paths/`, `components/`), собранный документ `bundle.yaml` и конфиги кодогенерации.
 
@@ -27,6 +28,7 @@
 | `partner/v1/codegen-server-restaurant.yaml` | серверный интерфейс коробки (тег `restaurant`) | `internal/restaurant/adapters/http/partner_v1` |
 | `partner/v1/codegen-client.yaml` | клиент партнёрского контракта | `api/partner/v1` |
 | `admin/v1/codegen-server.yaml` | серверный интерфейс админского API | `internal/platform/adapters/http/admin_v1` |
+| `restaurant/operator/v1/codegen-server.yaml` | серверный интерфейс рабочего места оператора | `internal/restaurant/adapters/http/operator_v1` |
 
 Серверные интерфейсы лежат рядом с адаптером, который их реализует. Клиенты — здесь, в
 модуле `github.com/IvanSergunin001/Test157/api`: у него свой `go.mod`, поэтому стороннее

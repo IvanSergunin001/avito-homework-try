@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -44,15 +43,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer closeQuietly(ctx, log, db)
+	defer postgres.CloseQuietly(ctx, log, db)
 
 	return httpx.Serve(ctx, log, cfg, platformhttp.NewRouter(log, db))
-}
-
-// closeQuietly закрывает подключение к базе: служба к этому моменту уже остановлена, и
-// ошибка закрытия ни на что не влияет — но узнать о ней из лога стоит.
-func closeQuietly(ctx context.Context, log *slog.Logger, db *sql.DB) {
-	if err := db.Close(); err != nil {
-		log.ErrorContext(ctx, "close database", slog.Any("error", err))
-	}
 }

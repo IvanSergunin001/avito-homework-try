@@ -73,6 +73,10 @@ services:
       RESTAURANT_HTTP_PORT: ${RESTAURANT_HTTP_PORT:-8081}
       RESTAURANT_SHUTDOWN_TIMEOUT: ${RESTAURANT_SHUTDOWN_TIMEOUT:-10s}
       RESTAURANT_LOG_LEVEL: ${RESTAURANT_LOG_LEVEL:-info}
+      # Коробка подключается к уже накатанной базе: мигрирует отдельный шаг выше.
+      # Схема у неё своя (`restaurant`), инстанс общий с площадкой — экономия на
+      # инфраструктуре демо, в эксплуатации у заведения свой.
+      RESTAURANT_DATABASE_DSN: postgres://${POSTGRES_USER:-kitchen}:${POSTGRES_PASSWORD:-kitchen}@postgres:5432/${POSTGRES_DB:-kitchen}?sslmode=disable
     ports:
       - "${RESTAURANT_HTTP_PORT:-8081}:${RESTAURANT_HTTP_PORT:-8081}"
     depends_on:

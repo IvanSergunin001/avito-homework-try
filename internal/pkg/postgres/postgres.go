@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // драйвер database/sql, которым службы ходят в PostgreSQL
@@ -58,4 +59,12 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// CloseQuietly закрывает подключение к базе: служба к этому моменту уже остановлена, и
+// ошибка закрытия ни на что не влияет — но узнать о ней из лога стоит.
+func CloseQuietly(ctx context.Context, log *slog.Logger, db *sql.DB) {
+	if err := db.Close(); err != nil {
+		log.ErrorContext(ctx, "close database", slog.Any("error", err))
+	}
 }
