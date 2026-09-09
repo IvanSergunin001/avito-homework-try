@@ -7,66 +7,91 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for OrderStatus.
+const (
+	Cancelled   OrderStatus = "cancelled"
+	Confirmed   OrderStatus = "confirmed"
+	UnderReview OrderStatus = "under_review"
+)
+
+// Valid indicates whether the value is a known member of the OrderStatus enum.
+func (e OrderStatus) Valid() bool {
+	switch e {
+	case Cancelled:
+		return true
+	case Confirmed:
+		return true
+	case UnderReview:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
-	Forbidden             ProblemCode = "forbidden"
-	IdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
-	InternalError         ProblemCode = "internal_error"
-	MenuItemNotFound      ProblemCode = "menu_item_not_found"
-	NotImplemented        ProblemCode = "not_implemented"
-	OrderNotCancellable   ProblemCode = "order_not_cancellable"
-	OrderNotFound         ProblemCode = "order_not_found"
-	OutOfStock            ProblemCode = "out_of_stock"
-	PriceChanged          ProblemCode = "price_changed"
-	ProductNotFound       ProblemCode = "product_not_found"
-	RestaurantClosed      ProblemCode = "restaurant_closed"
-	RestaurantNotFound    ProblemCode = "restaurant_not_found"
-	RestaurantUnavailable ProblemCode = "restaurant_unavailable"
-	Unauthorized          ProblemCode = "unauthorized"
-	UnknownProduct        ProblemCode = "unknown_product"
-	ValidationFailed      ProblemCode = "validation_failed"
+	ProblemCodeForbidden             ProblemCode = "forbidden"
+	ProblemCodeIdempotencyKeyReuse   ProblemCode = "idempotency_key_reuse"
+	ProblemCodeInternalError         ProblemCode = "internal_error"
+	ProblemCodeMenuItemNotFound      ProblemCode = "menu_item_not_found"
+	ProblemCodeNotImplemented        ProblemCode = "not_implemented"
+	ProblemCodeOrderNotCancellable   ProblemCode = "order_not_cancellable"
+	ProblemCodeOrderNotFound         ProblemCode = "order_not_found"
+	ProblemCodeOrderNotUnderReview   ProblemCode = "order_not_under_review"
+	ProblemCodeOutOfStock            ProblemCode = "out_of_stock"
+	ProblemCodePriceChanged          ProblemCode = "price_changed"
+	ProblemCodeProductNotFound       ProblemCode = "product_not_found"
+	ProblemCodeRestaurantClosed      ProblemCode = "restaurant_closed"
+	ProblemCodeRestaurantNotFound    ProblemCode = "restaurant_not_found"
+	ProblemCodeRestaurantUnavailable ProblemCode = "restaurant_unavailable"
+	ProblemCodeUnauthorized          ProblemCode = "unauthorized"
+	ProblemCodeUnknownProduct        ProblemCode = "unknown_product"
+	ProblemCodeValidationFailed      ProblemCode = "validation_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
-	case Forbidden:
+	case ProblemCodeForbidden:
 		return true
-	case IdempotencyKeyReuse:
+	case ProblemCodeIdempotencyKeyReuse:
 		return true
-	case InternalError:
+	case ProblemCodeInternalError:
 		return true
-	case MenuItemNotFound:
+	case ProblemCodeMenuItemNotFound:
 		return true
-	case NotImplemented:
+	case ProblemCodeNotImplemented:
 		return true
-	case OrderNotCancellable:
+	case ProblemCodeOrderNotCancellable:
 		return true
-	case OrderNotFound:
+	case ProblemCodeOrderNotFound:
 		return true
-	case OutOfStock:
+	case ProblemCodeOrderNotUnderReview:
 		return true
-	case PriceChanged:
+	case ProblemCodeOutOfStock:
 		return true
-	case ProductNotFound:
+	case ProblemCodePriceChanged:
 		return true
-	case RestaurantClosed:
+	case ProblemCodeProductNotFound:
 		return true
-	case RestaurantNotFound:
+	case ProblemCodeRestaurantClosed:
 		return true
-	case RestaurantUnavailable:
+	case ProblemCodeRestaurantNotFound:
 		return true
-	case Unauthorized:
+	case ProblemCodeRestaurantUnavailable:
 		return true
-	case UnknownProduct:
+	case ProblemCodeUnauthorized:
 		return true
-	case ValidationFailed:
+	case ProblemCodeUnknownProduct:
+		return true
+	case ProblemCodeValidationFailed:
 		return true
 	default:
 		return false
@@ -166,6 +191,101 @@ type NewMenuItem struct {
 	Stock Stock `json:"stock"`
 }
 
+// Order Входящий заказ глазами оператора: состав, адрес доставки и состояние. По нему оператор
+// решает, берётся заведение за заказ или нет.
+type Order struct {
+	// AcceptedAt Когда коробка приняла заказ по партнёрскому контракту.
+	AcceptedAt time.Time `json:"accepted_at"`
+
+	// Address Адрес доставки в свободной форме, как его передала площадка.
+	//
+	// Example: Москва, Лесная 7, кв. 12
+	Address string `json:"address"`
+
+	// CancellationReason Причина, по которой оператор отклонил заказ. Есть только у отклонённого заказа:
+	// площадка показывает её покупателю.
+	//
+	//
+	// Example: Закончились продукты
+	CancellationReason *string `json:"cancellation_reason,omitempty"`
+
+	// Id Идентификатор заказа в коробке.
+	//
+	// Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a05
+	Id    openapi_types.UUID `json:"id"`
+	Items []OrderItem        `json:"items"`
+
+	// PlacedAt Когда покупатель оформил заказ на площадке; площадка может его не прислать.
+	PlacedAt *time.Time `json:"placed_at,omitempty"`
+
+	// PlatformOrderId Тот же заказ на площадке. Хранится ссылкой, а не подменяет собой идентификатор
+	// коробки: по нему разбираются с площадкой, когда заказ вызывает вопросы.
+	//
+	//
+	// Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+	PlatformOrderId openapi_types.UUID `json:"platform_order_id"`
+
+	// Status Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
+	// ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
+	// отклонил его на этапе рассмотрения.
+	//
+	// Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
+	// о котором коробка сообщает площадке, и заводить для одного состояния два названия
+	// значило бы переводить одно в другое на каждой границе.
+	//
+	//
+	// Example: under_review
+	Status OrderStatus `json:"status"`
+
+	// Total Сумма заказа, посчитанная коробкой по своим ценам.
+	Total Money `json:"total"`
+}
+
+// OrderItem Позиция заказа — снимок на момент приёма: название и цена сохранены такими, какими
+// были, когда заказ приняли. Правка меню задним числом заказ не меняет: оператор готовит
+// то, что заказал покупатель, и по той цене, которую тот видел.
+type OrderItem struct {
+	// MenuItemId Позиция меню, из которой собран заказ. Позицию могли с тех пор изменить или удалить —
+	// состав заказа от этого не меняется.
+	//
+	//
+	// Example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+	MenuItemId openapi_types.UUID `json:"menu_item_id"`
+
+	// Name Example: Круассан с миндалём
+	Name string `json:"name"`
+
+	// Price Сумма в копейках — целое в минорных единицах (почему так, см. README).
+	//
+	// Example: 45000
+	Price Money `json:"price"`
+
+	// Quantity Количество единиц товара в позиции заказа.
+	//
+	// Example: 2
+	Quantity Quantity `json:"quantity"`
+}
+
+// OrderPage Страница входящих заказов.
+type OrderPage struct {
+	Items []Order `json:"items"`
+
+	// Page Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
+	// которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
+	Page PageMeta `json:"page"`
+}
+
+// OrderStatus Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
+// ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
+// отклонил его на этапе рассмотрения.
+//
+// Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
+// о котором коробка сообщает площадке, и заводить для одного состояния два названия
+// значило бы переводить одно в другое на каждой границе.
+//
+// Example: under_review
+type OrderStatus string
+
 // PageMeta Страница выдачи по смещению. Потолок страницы объявляет параметр `limit` той операции,
 // которая её отдаёт: у витрины и у меню он разный. Почему offset, а не курсор, — README.
 type PageMeta struct {
@@ -231,6 +351,17 @@ type ProblemBase struct {
 // Example: validation_failed
 type ProblemCode string
 
+// Quantity Количество единиц товара в позиции заказа.
+//
+// Example: 2
+type Quantity = int
+
+// Rejection Причина, по которой оператор не берётся за заказ.
+type Rejection struct {
+	// Reason Example: Закончились продукты
+	Reason string `json:"reason"`
+}
+
 // Stock Остаток позиции в штуках. Ноль — заказать нечего: позиция уезжает площадке недоступной,
 // но из меню не пропадает. Верхняя граница отсекает опечатку в форме: остатка больше
 // миллиона порций у кухни не бывает, а число сверх него коробке негде хранить.
@@ -264,18 +395,40 @@ type MenuItemId = openapi_types.UUID
 // Offset defines model for Offset.
 type Offset = int
 
+// OrderId defines model for OrderId.
+type OrderId = openapi_types.UUID
+
 // BadRequest Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
 // Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
 // Своё поле API добавляет к этой основе через `allOf`.
 type BadRequest = ProblemBase
+
+// Conflict Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type Conflict = ProblemBase
 
 // NotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
 // Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
 // Своё поле API добавляет к этой основе через `allOf`.
 type NotFound = ProblemBase
 
+// OrderNotFound Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type OrderNotFound = ProblemBase
+
 // ListMenuItemsParams defines parameters for ListMenuItems.
 type ListMenuItemsParams struct {
+	// Limit Размер страницы. По умолчанию 20, больше 100 за раз коробка не отдаёт.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Сколько записей пропустить от начала выдачи.
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListOrdersParams defines parameters for ListOrders.
+type ListOrdersParams struct {
 	// Limit Размер страницы. По умолчанию 20, больше 100 за раз коробка не отдаёт.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
@@ -294,6 +447,9 @@ type SetStockJSONRequestBody = StockUpdate
 
 // SetStopListMarkJSONRequestBody defines body for SetStopListMark for application/json ContentType.
 type SetStopListMarkJSONRequestBody = StopListMark
+
+// RejectOrderJSONRequestBody defines body for RejectOrder for application/json ContentType.
+type RejectOrderJSONRequestBody = Rejection
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -315,6 +471,15 @@ type ServerInterface interface {
 	// SetStopListMark Отметить позицию в стоп-листе или снять отметку
 	// (PUT /menu/{itemId}/stop-list)
 	SetStopListMark(w http.ResponseWriter, r *http.Request, itemId MenuItemId)
+	// ListOrders Входящие заказы
+	// (GET /orders)
+	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+	// ConfirmOrder Подтвердить заказ
+	// (POST /orders/{orderId}/confirm)
+	ConfirmOrder(w http.ResponseWriter, r *http.Request, orderId OrderId)
+	// RejectOrder Отклонить заказ на этапе рассмотрения
+	// (POST /orders/{orderId}/reject)
+	RejectOrder(w http.ResponseWriter, r *http.Request, orderId OrderId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -354,6 +519,24 @@ func (_ Unimplemented) SetStock(w http.ResponseWriter, r *http.Request, itemId M
 // SetStopListMark Отметить позицию в стоп-листе или снять отметку
 // (PUT /menu/{itemId}/stop-list)
 func (_ Unimplemented) SetStopListMark(w http.ResponseWriter, r *http.Request, itemId MenuItemId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOrders Входящие заказы
+// (GET /orders)
+func (_ Unimplemented) ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ConfirmOrder Подтвердить заказ
+// (POST /orders/{orderId}/confirm)
+func (_ Unimplemented) ConfirmOrder(w http.ResponseWriter, r *http.Request, orderId OrderId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RejectOrder Отклонить заказ на этапе рассмотрения
+// (POST /orders/{orderId}/reject)
+func (_ Unimplemented) RejectOrder(w http.ResponseWriter, r *http.Request, orderId OrderId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -530,6 +713,104 @@ func (siw *ServerInterfaceWrapper) SetStopListMark(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ListOrders operation middleware
+func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrdersParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmOrder operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orderId" -------------
+	var orderId OrderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orderId", chi.URLParam(r, "orderId"), &orderId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orderId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmOrder(w, r, orderId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RejectOrder operation middleware
+func (siw *ServerInterfaceWrapper) RejectOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "orderId" -------------
+	var orderId OrderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "orderId", chi.URLParam(r, "orderId"), &orderId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orderId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RejectOrder(w, r, orderId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -660,6 +941,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/menu/{itemId}/stock", wrapper.SetStock)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/orders", wrapper.ListOrders)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{orderId}/confirm", wrapper.ConfirmOrder)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{orderId}/reject", wrapper.RejectOrder)
 	})
 
 	return r

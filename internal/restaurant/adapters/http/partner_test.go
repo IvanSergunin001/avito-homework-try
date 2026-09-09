@@ -349,7 +349,7 @@ func TestRequestBodyLargerThanTheLimitIsRefusedByTheBox(t *testing.T) {
 	oversized := bytes.Repeat([]byte("a"), 2*httpx.MB)
 
 	document := asRefusal(t, newBox(t).do(t, http.MethodPost,
-		restauranthttp.PartnerAPIPrefix+"/orders", oversized), http.StatusRequestEntityTooLarge)
+		restauranthttp.PartnerAPIPrefix+"/orders", oversized, nil), http.StatusRequestEntityTooLarge)
 
 	if document.Code != string(partner.ValidationFailed) {
 		t.Errorf("код отказа %q, ожидали %q", document.Code, partner.ValidationFailed)

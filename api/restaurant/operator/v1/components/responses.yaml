@@ -1,0 +1,18 @@
+# Отказы рабочего места оператора, смысл которых уже общей HTTP-категории.
+
+OrderNotFound:
+  description: |
+    Заказа с таким идентификатором в коробке нет: `code` = `order_not_found`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: '../../../../common/v1/components/schemas.yaml#/ProblemBase'
+
+Conflict:
+  description: |
+    Заказ уже не на рассмотрении — его подтвердили или отклонили раньше:
+    `code` = `order_not_under_review`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: '../../../../common/v1/components/schemas.yaml#/ProblemBase'

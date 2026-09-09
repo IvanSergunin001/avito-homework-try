@@ -11,6 +11,11 @@ info:
     (`api/partner/v1`), но короче: остаток и отметка стоп-листа — внутренняя кухня
     заведения, площадке достаточно ответа «заказать можно или нельзя».
 
+    Здесь же оператор разбирает входящие заказы: видит их состав и адрес, подтверждает
+    заказ или отклоняет его на этапе рассмотрения. Сами заказы приходят в коробку по
+    партнёрскому контракту, и решение оператора уезжает обратно площадке — рабочее место
+    не принимает заказы и не выдумывает их состав.
+
     Позиция считается доступной, когда она не в стоп-листе и её остаток больше нуля.
     Признак `is_available` в ответах — тот же, что уезжает площадке: оператор видит
     последствие своей правки, не заглядывая в партнёрскую выдачу.
@@ -37,6 +42,8 @@ security: []
 tags:
   - name: menu
     description: Меню, стоп-лист и остатки
+  - name: orders
+    description: Входящие заказы
 paths:
   /menu:
     get:
@@ -195,6 +202,89 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+  /orders:
+    get:
+      operationId: listOrders
+      summary: Входящие заказы
+      description: |
+        Постраничный список заказов, которые площадка передала коробке: состав, адрес
+        доставки и состояние. Свежие идут первыми — оператор работает с началом списка.
+
+        Заказы не пропадают из списка после решения: оператору нужно видеть, что он уже
+        подтвердил и от чего отказался, а не только то, что ждёт решения.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Страница заказов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /orders/{orderId}/confirm:
+    post:
+      operationId: confirmOrder
+      summary: Подтвердить заказ
+      description: |
+        Оператор берётся за заказ: заведение выполнит его, и площадка сообщит об этом
+        покупателю. Подтвердить можно только заказ на рассмотрении — уже подтверждённый или
+        отклонённый заказ отвечает `409`.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ подтверждён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /orders/{orderId}/reject:
+    post:
+      operationId: rejectOrder
+      summary: Отклонить заказ на этапе рассмотрения
+      description: |
+        Заведение не берётся за заказ и объясняет причину — её площадка показывает
+        покупателю. Отклонить можно только заказ на рассмотрении: после подтверждения заказ
+        уже в работе, и отменяют его иначе.
+
+        Остатки, списанные при приёме заказа, возвращаются в меню: продукты на отклонённый
+        заказ не потрачены, и позиция снова продаётся.
+      tags:
+        - orders
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Rejection'
+      responses:
+        '200':
+          description: Заказ отклонён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 components:
   parameters:
     Limit:
@@ -223,6 +313,14 @@ components:
       description: |
         Идентификатор позиции в коробке. Он же уезжает площадке как `external_id`
         партнёрского контракта.
+      schema:
+        type: string
+        format: uuid
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Идентификатор заказа в коробке заведения.
       schema:
         type: string
         format: uuid
@@ -338,6 +436,7 @@ components:
         - restaurant_not_found
         - product_not_found
         - order_not_found
+        - order_not_under_review
         - menu_item_not_found
         - out_of_stock
         - price_changed
@@ -451,6 +550,137 @@ components:
       properties:
         stock:
           $ref: '#/components/schemas/Stock'
+    OrderStatus:
+      type: string
+      description: |
+        Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
+        ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
+        отклонил его на этапе рассмотрения.
+
+        Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
+        о котором коробка сообщает площадке, и заводить для одного состояния два названия
+        значило бы переводить одно в другое на каждой границе.
+      enum:
+        - under_review
+        - confirmed
+        - cancelled
+      example: under_review
+    Quantity:
+      type: integer
+      minimum: 1
+      maximum: 100
+      description: Количество единиц товара в позиции заказа.
+      example: 2
+    OrderItem:
+      type: object
+      description: |
+        Позиция заказа — снимок на момент приёма: название и цена сохранены такими, какими
+        были, когда заказ приняли. Правка меню задним числом заказ не меняет: оператор готовит
+        то, что заказал покупатель, и по той цене, которую тот видел.
+      required:
+        - menu_item_id
+        - name
+        - quantity
+        - price
+      properties:
+        menu_item_id:
+          type: string
+          format: uuid
+          description: |
+            Позиция меню, из которой собран заказ. Позицию могли с тех пор изменить или удалить —
+            состав заказа от этого не меняется.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Круассан с миндалём
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+        price:
+          $ref: '#/components/schemas/Money'
+    Order:
+      type: object
+      description: |
+        Входящий заказ глазами оператора: состав, адрес доставки и состояние. По нему оператор
+        решает, берётся заведение за заказ или нет.
+      required:
+        - id
+        - platform_order_id
+        - status
+        - address
+        - items
+        - total
+        - accepted_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор заказа в коробке.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a05
+        platform_order_id:
+          type: string
+          format: uuid
+          description: |
+            Тот же заказ на площадке. Хранится ссылкой, а не подменяет собой идентификатор
+            коробки: по нему разбираются с площадкой, когда заказ вызывает вопросы.
+          example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        address:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Адрес доставки в свободной форме, как его передала площадка.
+          example: Москва, Лесная 7, кв. 12
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Сумма заказа, посчитанная коробкой по своим ценам.
+        cancellation_reason:
+          type: string
+          maxLength: 500
+          description: |
+            Причина, по которой оператор отклонил заказ. Есть только у отклонённого заказа:
+            площадка показывает её покупателю.
+          example: Закончились продукты
+        placed_at:
+          type: string
+          format: date-time
+          description: Когда покупатель оформил заказ на площадке; площадка может его не прислать.
+        accepted_at:
+          type: string
+          format: date-time
+          description: Когда коробка приняла заказ по партнёрскому контракту.
+    OrderPage:
+      type: object
+      description: Страница входящих заказов.
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+    Rejection:
+      type: object
+      description: Причина, по которой оператор не берётся за заказ.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          example: Закончились продукты
   responses:
     BadRequest:
       description: |
@@ -462,6 +692,21 @@ components:
     NotFound:
       description: |
         Ресурса с таким идентификатором нет или он недоступен обратившемуся.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    OrderNotFound:
+      description: |
+        Заказа с таким идентификатором в коробке нет: `code` = `order_not_found`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
+    Conflict:
+      description: |
+        Заказ уже не на рассмотрении — его подтвердили или отклонили раньше:
+        `code` = `order_not_under_review`.
       content:
         application/problem+json:
           schema:

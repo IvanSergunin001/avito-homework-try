@@ -8,6 +8,10 @@
 // читает на партнёрском — там, где его увидит площадка.
 // Меню у заведения одно, и тест ходит теми же дверями, что настоящие потребители.
 //
+// С заказом путь обратный: тест передаёт его по партнёрскому контракту, как это делает
+// площадка, а разбирает на рабочем месте оператора — заказ тоже один, и увидеть его
+// глазами обеих сторон можно только пройдя обе двери.
+//
 // Имя теста называет правило предметной области, а не функцию под тестом: по списку
 // упавших тестов должно быть видно, какое правило системы нарушено.
 package http_test
@@ -24,6 +28,7 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
 	"github.com/IvanSergunin001/Test157/internal/pkg/testdb"
 	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http"
+	"github.com/IvanSergunin001/Test157/internal/restaurant/domain"
 )
 
 const (
@@ -31,6 +36,10 @@ const (
 	operatorMenu = restauranthttp.OperatorAPIPrefix + "/menu"
 	// contractMenu — партнёрский контракт: этой выдачей меню видит площадка.
 	contractMenu = restauranthttp.PartnerAPIPrefix + "/menu"
+	// contractOrders — партнёрский контракт: этой ручкой площадка передаёт заказ.
+	contractOrders = restauranthttp.PartnerAPIPrefix + "/orders"
+	// operatorOrders — рабочее место оператора: здесь он разбирает входящие заказы.
+	operatorOrders = restauranthttp.OperatorAPIPrefix + "/orders"
 )
 
 // box — коробка заведения, поднятая целиком для одного теста.
@@ -44,14 +53,24 @@ type box struct {
 
 // newBox поднимает коробку по её шву. Готовить окружение перед прогоном не нужно: базу
 // оснастка поднимает сама (см. internal/pkg/testdb).
+//
+// Заведение в ней работает круглосуточно: у теста, который проверяет не расписание, не
+// должно быть шанса упасть оттого, что его запустили ночью.
 func newBox(t *testing.T) *box {
+	t.Helper()
+
+	return openBox(t, domain.AllDay())
+}
+
+// openBox поднимает коробку с заданными часами работы.
+func openBox(t *testing.T, hours domain.WorkingHours) *box {
 	t.Helper()
 
 	db := testdb.New(t)
 
 	// Логи службы в тестах никому не нужны, но middleware, которое их пишет, остаётся
 	// на месте: шов проверяется вместе со всей обвязкой, а не в обход неё.
-	srv := httptest.NewServer(restauranthttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB))
+	srv := httptest.NewServer(restauranthttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB, hours))
 	t.Cleanup(srv.Close)
 
 	return &box{srv: srv, db: db}
@@ -69,11 +88,19 @@ type response struct {
 func (b *box) get(t *testing.T, path string) response {
 	t.Helper()
 
-	return b.do(t, http.MethodGet, path, nil)
+	return b.do(t, http.MethodGet, path, nil, nil)
 }
 
 // send отправляет тело коробке: так оператор заводит и правит позиции меню.
 func (b *box) send(t *testing.T, method, path string, body any) response {
+	t.Helper()
+
+	return b.sendWithHeaders(t, method, path, body, nil)
+}
+
+// sendWithHeaders отправляет тело вместе с заголовками: так площадка передаёт заказ —
+// с ключом идемпотентности и номером попытки, объявленными контрактом.
+func (b *box) sendWithHeaders(t *testing.T, method, path string, body any, headers http.Header) response {
 	t.Helper()
 
 	encoded, err := json.Marshal(body)
@@ -81,11 +108,11 @@ func (b *box) send(t *testing.T, method, path string, body any) response {
 		t.Fatalf("собрать тело запроса %s %s: %v", method, path, err)
 	}
 
-	return b.do(t, method, path, encoded)
+	return b.do(t, method, path, encoded, headers)
 }
 
 // do выполняет запрос и читает ответ целиком.
-func (b *box) do(t *testing.T, method, path string, body []byte) response {
+func (b *box) do(t *testing.T, method, path string, body []byte, headers http.Header) response {
 	t.Helper()
 
 	var reader io.Reader
@@ -99,6 +126,11 @@ func (b *box) do(t *testing.T, method, path string, body []byte) response {
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
 	}
 
 	resp, err := b.srv.Client().Do(req)
@@ -131,12 +163,17 @@ func decode(t *testing.T, resp response, status int, target any) {
 }
 
 // problemDocument — отказ в формате problem+json.
+//
+// Позиция и её актуальная цена — расширения партнёрского контракта: по ним площадка
+// чинит каталог, поэтому тест читает их так же, как читала бы она.
 type problemDocument struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail"`
-	Code   string `json:"code"`
+	Type              string `json:"type"`
+	Title             string `json:"title"`
+	Status            int    `json:"status"`
+	Detail            string `json:"detail"`
+	Code              string `json:"code"`
+	ProductExternalID string `json:"product_external_id"`
+	CurrentPrice      *int64 `json:"current_price"`
 }
 
 // asRefusal разбирает ответ как отказ и проверяет, что отказ отдан в обещанном виде: тот

@@ -132,3 +132,133 @@ StopListMark:
     in_stop_list:
       type: boolean
       example: true
+
+Order:
+  type: object
+  description: |
+    Входящий заказ глазами оператора: состав, адрес доставки и состояние. По нему оператор
+    решает, берётся заведение за заказ или нет.
+  required:
+    - id
+    - platform_order_id
+    - status
+    - address
+    - items
+    - total
+    - accepted_at
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Идентификатор заказа в коробке.
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a05
+    platform_order_id:
+      type: string
+      format: uuid
+      description: |
+        Тот же заказ на площадке. Хранится ссылкой, а не подменяет собой идентификатор
+        коробки: по нему разбираются с площадкой, когда заказ вызывает вопросы.
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a03
+    status:
+      $ref: '#/OrderStatus'
+    address:
+      type: string
+      minLength: 1
+      maxLength: 500
+      description: Адрес доставки в свободной форме, как его передала площадка.
+      example: Москва, Лесная 7, кв. 12
+    items:
+      type: array
+      minItems: 1
+      items:
+        $ref: '#/OrderItem'
+    total:
+      allOf:
+        - $ref: '../../../../common/v1/components/schemas.yaml#/Money'
+      description: Сумма заказа, посчитанная коробкой по своим ценам.
+    cancellation_reason:
+      type: string
+      maxLength: 500
+      description: |
+        Причина, по которой оператор отклонил заказ. Есть только у отклонённого заказа:
+        площадка показывает её покупателю.
+      example: Закончились продукты
+    placed_at:
+      type: string
+      format: date-time
+      description: Когда покупатель оформил заказ на площадке; площадка может его не прислать.
+    accepted_at:
+      type: string
+      format: date-time
+      description: Когда коробка приняла заказ по партнёрскому контракту.
+
+OrderItem:
+  type: object
+  description: |
+    Позиция заказа — снимок на момент приёма: название и цена сохранены такими, какими
+    были, когда заказ приняли. Правка меню задним числом заказ не меняет: оператор готовит
+    то, что заказал покупатель, и по той цене, которую тот видел.
+  required:
+    - menu_item_id
+    - name
+    - quantity
+    - price
+  properties:
+    menu_item_id:
+      type: string
+      format: uuid
+      description: |
+        Позиция меню, из которой собран заказ. Позицию могли с тех пор изменить или удалить —
+        состав заказа от этого не меняется.
+      example: 018f2b5c-1f4a-7c3e-9a10-2b8f5d7c1a04
+    name:
+      type: string
+      minLength: 1
+      maxLength: 200
+      example: Круассан с миндалём
+    quantity:
+      $ref: '../../../../common/v1/components/schemas.yaml#/Quantity'
+    price:
+      $ref: '../../../../common/v1/components/schemas.yaml#/Money'
+
+OrderPage:
+  type: object
+  description: Страница входящих заказов.
+  required:
+    - items
+    - page
+  properties:
+    items:
+      type: array
+      items:
+        $ref: '#/Order'
+    page:
+      $ref: '../../../../common/v1/components/schemas.yaml#/PageMeta'
+
+OrderStatus:
+  type: string
+  description: |
+    Состояние заказа в коробке. `under_review` — заказ принят по партнёрскому контракту и
+    ждёт решения оператора; `confirmed` — оператор взялся за него; `cancelled` — оператор
+    отклонил его на этапе рассмотрения.
+
+    Отклонённый заказ становится именно отменённым, а не «отклонённым»: это тот же статус,
+    о котором коробка сообщает площадке, и заводить для одного состояния два названия
+    значило бы переводить одно в другое на каждой границе.
+  enum:
+    - under_review
+    - confirmed
+    - cancelled
+  example: under_review
+
+Rejection:
+  type: object
+  description: Причина, по которой оператор не берётся за заказ.
+  required:
+    - reason
+  properties:
+    reason:
+      type: string
+      minLength: 1
+      maxLength: 500
+      example: Закончились продукты
