@@ -176,6 +176,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '502':
@@ -233,6 +235,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
 components:
   parameters:
     Limit:
@@ -677,6 +681,13 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    RequestEntityTooLarge:
+      description: |
+        Тело запроса больше допустимого предела: `code` = `validation_failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemBase'
     UnprocessableEntity:
       description: |
         Идентификатор заказа уже использован для другого состава: `code` = `idempotency_key_reuse`.

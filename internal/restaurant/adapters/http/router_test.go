@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -46,6 +47,24 @@ func get(t *testing.T, srv *httptest.Server, path string) response {
 	}
 
 	return response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: body}
+}
+
+// post отправляет тело в коробку и возвращает прочитанный ответ.
+func post(t *testing.T, srv *httptest.Server, path string, body []byte) response {
+	t.Helper()
+
+	resp, err := srv.Client().Post(srv.URL+path, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("запрос POST %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	read, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("прочитать ответ POST %s: %v", path, err)
+	}
+
+	return response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: read}
 }
 
 func TestRunningRestaurantBoxReportsItIsHealthy(t *testing.T) {

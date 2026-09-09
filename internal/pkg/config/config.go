@@ -28,6 +28,11 @@ type Config struct {
 	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
 	// LogLevel — минимальный уровень записи: debug, info, warn, error.
 	LogLevel slog.Level `koanf:"log_level"`
+	// DatabaseDSN — строка подключения к PostgreSQL вида
+	// `postgres://user:pass@host:port/db?sslmode=disable`. Умолчания у неё нет: адрес
+	// базы зависит от того, где служба запущена, и подставленный «на всякий случай»
+	// localhost означал бы, что служба в контейнере молча стучится не туда.
+	DatabaseDSN string `koanf:"database_dsn"`
 }
 
 // Default — значения по умолчанию для службы, слушающей httpPort. Их переопределяет

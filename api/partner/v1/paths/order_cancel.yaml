@@ -28,3 +28,5 @@ post:
       $ref: '../../../common/v1/components/responses.yaml#/NotFound'
     '409':
       $ref: '../components/responses.yaml#/Conflict'
+    '413':
+      $ref: '../../../common/v1/components/responses.yaml#/RequestEntityTooLarge'

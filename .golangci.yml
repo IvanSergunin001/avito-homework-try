@@ -12,6 +12,7 @@ linters:
   enable:
     - bodyclose      # не закрытое тело ответа — утечка соединений в клиенте площадки
     - contextcheck   # запрос наружу обязан наследовать контекст входящего запроса
+    - depguard       # правило слоёв: домен не импортирует инфраструктуру
     - errorlint      # сравнение ошибок через errors.Is/As, а не ==
     - gocritic
     - gosec
@@ -26,6 +27,66 @@ linters:
     - whitespace
 
   settings:
+    depguard:
+      # Слои идут в одну сторону: `domain` -> `application` -> `adapters`, и оба конца
+      # правила держит линтер, а не дисциплина: домен или сценарий, знающий про HTTP или
+      # про базу, нельзя ни прочитать, ни проверить в отрыве от инфраструктуры, а замечают
+      # такой импорт обычно тогда, когда он уже оброс кодом.
+      #
+      # Третье правило держит границу контекстов (§3 плана): площадка и коробка заведения —
+      # разные bounded context'ы и общаются только через опубликованный контракт. Общая
+      # обвязка (`internal/pkg`) под правила не попадает: она инфраструктура обоих.
+      rules:
+        domain:
+          files:
+            - "**/internal/platform/domain/**"
+            - "**/internal/restaurant/domain/**"
+          deny:
+            - pkg: net/http
+              desc: домен не ходит по сети — HTTP живёт в adapters/http
+            - pkg: database/sql
+              desc: домен не знает про базу — SQL живёт в adapters/postgres
+            - pkg: github.com/jackc/pgx
+              desc: домен не знает про драйвер базы — он живёт в adapters/postgres
+            - pkg: github.com/IvanSergunin001/Test157/internal/pkg/httpx
+              desc: обвязка HTTP — инфраструктура, домену она не видна
+            - pkg: github.com/IvanSergunin001/Test157/internal/platform/adapters
+              desc: adapters импортирует domain, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/restaurant/adapters
+              desc: adapters импортирует domain, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/platform/application
+              desc: application импортирует domain, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/restaurant/application
+              desc: application импортирует domain, не наоборот
+        application:
+          files:
+            - "**/internal/platform/application/**"
+            - "**/internal/restaurant/application/**"
+          deny:
+            - pkg: net/http
+              desc: сценарии не знают о транспорте — HTTP живёт в adapters/http
+            - pkg: database/sql
+              desc: сценарии не знают о базе — SQL живёт в adapters/postgres
+            - pkg: github.com/jackc/pgx
+              desc: сценарии не знают о драйвере базы — он живёт в adapters/postgres
+            - pkg: github.com/IvanSergunin001/Test157/internal/pkg/httpx
+              desc: обвязка HTTP — инфраструктура, сценариям она не видна
+            - pkg: github.com/IvanSergunin001/Test157/internal/platform/adapters
+              desc: adapters импортирует application, не наоборот
+            - pkg: github.com/IvanSergunin001/Test157/internal/restaurant/adapters
+              desc: adapters импортирует application, не наоборот
+        platform:
+          files:
+            - "**/internal/platform/**"
+          deny:
+            - pkg: github.com/IvanSergunin001/Test157/internal/restaurant
+              desc: контексты общаются только через опубликованный контракт (PLAN §3)
+        restaurant:
+          files:
+            - "**/internal/restaurant/**"
+          deny:
+            - pkg: github.com/IvanSergunin001/Test157/internal/platform
+              desc: контексты общаются только через опубликованный контракт (PLAN §3)
     sloglint:
       # Ключ-значение вперемешку с slog.Attr читается хуже, чем один стиль.
       attr-only: true

@@ -15,11 +15,15 @@
 package http_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
 	"github.com/IvanSergunin001/Test157/internal/pkg/testdb"
@@ -47,7 +51,7 @@ func newPlatform(t *testing.T) *platform {
 
 	// Логи службы в тестах никому не нужны, но middleware, которое их пишет, остаётся
 	// на месте: шов проверяется вместе со всей обвязкой, а не в обход неё.
-	srv := httptest.NewServer(platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo)))
+	srv := httptest.NewServer(platformhttp.NewRouter(logger.New(io.Discard, slog.LevelInfo), db.DB))
 	t.Cleanup(srv.Close)
 
 	return &platform{srv: srv, db: db}
@@ -92,9 +96,16 @@ type problemDocument struct {
 func (p *platform) refusal(t *testing.T, path string, status int) problemDocument {
 	t.Helper()
 
-	resp := p.get(t, path)
+	return asRefusal(t, p.get(t, path), status)
+}
+
+// asRefusal разбирает ответ как отказ и проверяет, что отказ отдан в обещанном контрактом
+// виде: тот код ответа, тип содержимого problem+json и разбираемое тело.
+func asRefusal(t *testing.T, resp response, status int) problemDocument {
+	t.Helper()
+
 	if resp.Status != status {
-		t.Fatalf("GET %s вернул %d, ожидали %d: %s", path, resp.Status, status, resp.Body)
+		t.Fatalf("площадка ответила %d, ожидали %d: %s", resp.Status, status, resp.Body)
 	}
 	if resp.ContentType != "application/problem+json" {
 		t.Errorf("тип содержимого %q, ожидали application/problem+json", resp.ContentType)
@@ -104,6 +115,95 @@ func (p *platform) refusal(t *testing.T, path string, status int) problemDocumen
 	if err := json.Unmarshal(resp.Body, &document); err != nil {
 		t.Fatalf("разобрать отказ: %v", err)
 	}
+	if document.Type == "" {
+		t.Error("в отказе нет поля type, а problem+json без него — не problem+json")
+	}
 
 	return document
+}
+
+// post отправляет тело на площадку и возвращает прочитанный ответ.
+func (p *platform) post(t *testing.T, path string, body []byte) response {
+	t.Helper()
+
+	return p.send(t, path, bytes.NewReader(body))
+}
+
+// postWithoutDeclaredLength отправляет тело источником, длину которого клиент заранее не
+// знает: `Content-Length` в таком запросе нет вовсе, тело уходит chunked'ом, и предел на
+// размер проверяется уже чтением. Обёртка прячет `*bytes.Reader` за голым io.Reader —
+// иначе клиент вычислит длину сам и объявит её.
+//
+// Заголовок покупателя обязателен по контракту: без него запрос отказали бы на разборе
+// параметров, не дойдя до чтения тела, — а проверяется здесь как раз чтение.
+func (p *platform) postWithoutDeclaredLength(t *testing.T, path string, body []byte) response {
+	t.Helper()
+
+	return p.send(t, path, struct{ io.Reader }{bytes.NewReader(body)}, func(r *http.Request) {
+		r.Header.Set("User-Id", uuid.New().String())
+	})
+}
+
+// send отправляет тело на площадку и возвращает прочитанный ответ.
+func (p *platform) send(t *testing.T, path string, body io.Reader, prepare ...func(*http.Request)) response {
+	t.Helper()
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.srv.URL+path, body)
+	if err != nil {
+		t.Fatalf("собрать запрос POST %s: %v", path, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	for _, apply := range prepare {
+		apply(request)
+	}
+
+	resp, err := p.srv.Client().Do(request)
+	if err != nil {
+		t.Fatalf("запрос POST %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	read, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("прочитать ответ POST %s: %v", path, err)
+	}
+
+	return response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: read}
+}
+
+// openRestaurant заводит на площадке работающее заведение и возвращает его идентификатор.
+//
+// Заведение появляется прямо в базе: админской ручки регистрации на этом этапе ещё нет,
+// а подменять хранилище нечем — оно настоящее. Как только регистрация появится, исходное
+// состояние будет готовиться ею.
+func (p *platform) openRestaurant(t *testing.T, name string) uuid.UUID {
+	t.Helper()
+
+	return p.restaurant(t, name, true)
+}
+
+// closedRestaurant заводит заведение, которое больше не работает.
+func (p *platform) closedRestaurant(t *testing.T, name string) uuid.UUID {
+	t.Helper()
+
+	return p.restaurant(t, name, false)
+}
+
+func (p *platform) restaurant(t *testing.T, name string, working bool) uuid.UUID {
+	t.Helper()
+
+	// uuid v7 — тот же вид идентификатора, что площадка выдаёт заведениям сама:
+	// монотонный, чтобы вставки не разносило по индексу.
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("сгенерировать идентификатор заведения: %v", err)
+	}
+
+	_, err = p.db.ExecContext(t.Context(),
+		`INSERT INTO platform.restaurants (id, name, is_active) VALUES ($1, $2, $3)`, id, name, working)
+	if err != nil {
+		t.Fatalf("завести заведение %q: %v", name, err)
+	}
+
+	return id
 }

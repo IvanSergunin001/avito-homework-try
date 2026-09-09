@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	partner "github.com/IvanSergunin001/Test157/api/partner/v1"
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	restauranthttp "github.com/IvanSergunin001/Test157/internal/restaurant/adapters/http"
 )
 
@@ -117,9 +119,16 @@ type problemDocument struct {
 func refusal(t *testing.T, srv *httptest.Server, path string, status int) problemDocument {
 	t.Helper()
 
-	resp := get(t, srv, path)
+	return asRefusal(t, get(t, srv, path), status)
+}
+
+// asRefusal разбирает ответ как отказ и проверяет, что отказ отдан в обещанном контрактом
+// виде: тот код ответа, тип содержимого problem+json и разбираемое тело.
+func asRefusal(t *testing.T, resp response, status int) problemDocument {
+	t.Helper()
+
 	if resp.Status != status {
-		t.Fatalf("GET %s вернул %d, ожидали %d: %s", path, resp.Status, status, resp.Body)
+		t.Fatalf("коробка ответила %d, ожидали %d: %s", resp.Status, status, resp.Body)
 	}
 	if resp.ContentType != "application/problem+json" {
 		t.Errorf("тип содержимого %q, ожидали application/problem+json", resp.ContentType)
@@ -131,4 +140,21 @@ func refusal(t *testing.T, srv *httptest.Server, path string, status int) proble
 	}
 
 	return document
+}
+
+// Предел на тело стоит и у коробки: заказ приносит ей площадка, и тело неограниченного
+// размера читается в память до того, как хоть одно правило успеет сказать, что запрос
+// неверен.
+func TestRequestBodyLargerThanTheLimitIsRefusedByTheBox(t *testing.T) {
+	oversized := bytes.Repeat([]byte("a"), 2*httpx.MB)
+
+	document := asRefusal(t, post(t, newRestaurantBox(t),
+		restauranthttp.PartnerAPIPrefix+"/orders", oversized), http.StatusRequestEntityTooLarge)
+
+	if document.Code != string(partner.ValidationFailed) {
+		t.Errorf("код отказа %q, ожидали %q", document.Code, partner.ValidationFailed)
+	}
+	if document.Status != http.StatusRequestEntityTooLarge {
+		t.Errorf("в теле отказа status=%d, ожидали 413", document.Status)
+	}
 }

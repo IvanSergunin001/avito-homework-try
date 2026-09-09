@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +24,12 @@ const (
 	MenuPageDefault = 100
 	// MenuPageMax — потолок страницы меню, объявленный партнёрским контрактом.
 	MenuPageMax = 500
+
+	// maxRequestBodyBytes — потолок на тело входящего запроса. Заказ, который приносит
+	// площадка, — это список позиций корзины, и мегабайта ему хватает с запасом; всё, что
+	// больше, коробка не разбирает, а отклоняет: тело неограниченного размера читается в
+	// память до того, как хоть одно правило успеет сказать, что запрос неверен.
+	maxRequestBodyBytes = 1 * httpx.MB
 )
 
 // partnerAPI обслуживает в коробке ту половину партнёрского контракта, которую обязано
@@ -39,12 +46,19 @@ func mountPartnerAPI(r chi.Router) {
 		ResponseErrorHandlerFunc: writePartnerResponseProblem,
 	})
 
-	partner_v1.HandlerWithOptions(handler, partner_v1.ChiServerOptions{
-		BaseURL:    PartnerAPIPrefix,
-		BaseRouter: r,
-		// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
-		// `limit`. Контракт обещает на них `problem+json`, а не текст по умолчанию.
-		ErrorHandlerFunc: writePartnerRequestProblem,
+	// Лимит тела стоит перед сгенерированными маршрутами: размер тела проверяется раньше
+	// всего остального, потому что разбор параметров и тела уже читает запрос. Отказ
+	// отдаётся по схеме партнёрского контракта — по ней коробка и отвечает.
+	r.Group(func(r chi.Router) {
+		r.Use(httpx.LimitRequestBody(maxRequestBodyBytes, refuseOversizedPartnerBody))
+
+		partner_v1.HandlerWithOptions(handler, partner_v1.ChiServerOptions{
+			BaseURL:    PartnerAPIPrefix,
+			BaseRouter: r,
+			// Сюда попадают ошибки разбора параметров: неверный uuid в пути, нечисловой
+			// `limit`. Контракт обещает на них `problem+json`, а не текст по умолчанию.
+			ErrorHandlerFunc: writePartnerRequestProblem,
+		})
 	})
 }
 
@@ -105,8 +119,35 @@ func partnerValidationProblem(err error) partner_v1.ProblemBase {
 
 // writePartnerRequestProblem отвечает на неразобранный запрос — неверный uuid в пути,
 // нечисловой `limit`, неразбираемое тело.
+//
+// Тело, оборвавшееся на пределе, приезжает сюда же и отдаётся тем же отказом, что и
+// объявленная длина сверх предела: причина у площадки одна.
 func writePartnerRequestProblem(w http.ResponseWriter, r *http.Request, err error) {
+	var oversized *http.MaxBytesError
+	if errors.As(err, &oversized) {
+		refuseOversizedPartnerBody(w, r)
+
+		return
+	}
+
 	problem.Write(r.Context(), w, http.StatusBadRequest, partnerValidationProblem(err))
+}
+
+// refuseOversizedPartnerBody отвечает на запрос, тело которого больше допустимого.
+//
+// Код причины — `validation_failed`: запрос не прошёл проверку, и другого кода на это в
+// закрытом перечне спецификации нет. Заводить новый код ради размера тела незачем — ветка
+// поведения у площадки та же самая, что и при любом непринятом запросе.
+func refuseOversizedPartnerBody(w http.ResponseWriter, r *http.Request) {
+	detail := fmt.Sprintf("тело запроса ограничено %d байтами", maxRequestBodyBytes)
+
+	problem.Write(r.Context(), w, http.StatusRequestEntityTooLarge, partner_v1.ProblemBase{
+		Type:   problem.DefaultType,
+		Title:  "Слишком большое тело запроса",
+		Status: http.StatusRequestEntityTooLarge,
+		Detail: &detail,
+		Code:   partner_v1.ValidationFailed,
+	})
 }
 
 // writePartnerResponseProblem отвечает, когда обработчик вернул ошибку. Операция,

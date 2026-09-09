@@ -33,3 +33,11 @@ NotFound:
     application/problem+json:
       schema:
         $ref: 'schemas.yaml#/ProblemBase'
+
+RequestEntityTooLarge:
+  description: |
+    Тело запроса больше допустимого предела: `code` = `validation_failed`.
+  content:
+    application/problem+json:
+      schema:
+        $ref: 'schemas.yaml#/ProblemBase'

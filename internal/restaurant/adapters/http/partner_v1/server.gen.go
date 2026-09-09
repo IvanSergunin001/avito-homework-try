@@ -326,6 +326,11 @@ type Conflict = Problem
 // Своё поле API добавляет к этой основе через `allOf`.
 type NotFound = ProblemBase
 
+// RequestEntityTooLarge Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type RequestEntityTooLarge = ProblemBase
+
 // ListMenuParams defines parameters for ListMenu.
 type ListMenuParams struct {
 	// Limit Размер страницы меню: по умолчанию 100, максимум 500. Страничная выдача — обязанность
@@ -671,6 +676,8 @@ type ConflictApplicationProblemPlusJSONResponse Problem
 
 type NotFoundApplicationProblemPlusJSONResponse ProblemBase
 
+type RequestEntityTooLargeApplicationProblemPlusJSONResponse ProblemBase
+
 type ListMenuRequestObject struct {
 	Params ListMenuParams
 }
@@ -778,6 +785,22 @@ func (response AcceptOrder409ApplicationProblemPlusJSONResponse) VisitAcceptOrde
 	return err
 }
 
+type AcceptOrder413ApplicationProblemPlusJSONResponse struct {
+	RequestEntityTooLargeApplicationProblemPlusJSONResponse
+}
+
+func (response AcceptOrder413ApplicationProblemPlusJSONResponse) VisitAcceptOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CancelAcceptedOrderRequestObject struct {
 	OrderId OrderId `json:"orderId"`
 	Body    *CancelAcceptedOrderJSONRequestBody
@@ -845,6 +868,22 @@ func (response CancelAcceptedOrder409ApplicationProblemPlusJSONResponse) VisitCa
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelAcceptedOrder413ApplicationProblemPlusJSONResponse struct {
+	RequestEntityTooLargeApplicationProblemPlusJSONResponse
+}
+
+func (response CancelAcceptedOrder413ApplicationProblemPlusJSONResponse) VisitCancelAcceptedOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
 	_, err := buf.WriteTo(w)
 	return err
 }

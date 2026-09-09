@@ -326,6 +326,11 @@ type Conflict = Problem
 // Своё поле API добавляет к этой основе через `allOf`.
 type NotFound = ProblemBase
 
+// RequestEntityTooLarge Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type RequestEntityTooLarge = ProblemBase
+
 // ListMenuParams defines parameters for ListMenu.
 type ListMenuParams struct {
 	// Limit Размер страницы меню: по умолчанию 100, максимум 500. Страничная выдача — обязанность
@@ -950,6 +955,8 @@ type AcceptOrderResponse struct {
 	ApplicationproblemJSON400 *BadRequest
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *RequestEntityTooLarge
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -970,6 +977,11 @@ func (r AcceptOrderResponse) GetApplicationproblemJSON400() *BadRequest {
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
 func (r AcceptOrderResponse) GetApplicationproblemJSON409() *Conflict {
 	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r AcceptOrderResponse) GetApplicationproblemJSON413() *RequestEntityTooLarge {
+	return r.ApplicationproblemJSON413
 }
 
 // GetBody returns the raw response body bytes
@@ -1012,6 +1024,8 @@ type CancelAcceptedOrderResponse struct {
 	ApplicationproblemJSON404 *NotFound
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *RequestEntityTooLarge
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -1032,6 +1046,11 @@ func (r CancelAcceptedOrderResponse) GetApplicationproblemJSON404() *NotFound {
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
 func (r CancelAcceptedOrderResponse) GetApplicationproblemJSON409() *Conflict {
 	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r CancelAcceptedOrderResponse) GetApplicationproblemJSON413() *RequestEntityTooLarge {
+	return r.ApplicationproblemJSON413
 }
 
 // GetBody returns the raw response body bytes
@@ -1233,6 +1252,13 @@ func ParseAcceptOrderResponse(rsp *http.Response) (*AcceptOrderResponse, error) 
 		}
 		response.ApplicationproblemJSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestEntityTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
 	}
 
 	return response, nil
@@ -1279,6 +1305,13 @@ func ParseCancelAcceptedOrderResponse(rsp *http.Response) (*CancelAcceptedOrderR
 			return nil, err
 		}
 		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestEntityTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
 
 	}
 
