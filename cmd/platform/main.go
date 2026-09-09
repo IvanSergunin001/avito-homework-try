@@ -12,8 +12,8 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/config"
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	"github.com/IvanSergunin001/Test157/internal/pkg/logger"
+	"github.com/IvanSergunin001/Test157/internal/pkg/postgres"
 	platformhttp "github.com/IvanSergunin001/Test157/internal/platform/adapters/http"
-	"github.com/IvanSergunin001/Test157/internal/platform/adapters/postgres"
 )
 
 // envPrefix — префикс переменных окружения площадки. Источник настроек один — окружение

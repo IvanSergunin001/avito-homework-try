@@ -460,6 +460,11 @@ type GatewayTimeout = Problem
 // Своё поле API добавляет к этой основе через `allOf`.
 type NotFound = ProblemBase
 
+// RequestEntityTooLarge Отказ в формате `application/problem+json` (RFC 9457) — общая для всех API часть.
+// Машиночитаемая причина — в `code`; `detail` предназначен человеку и меняется без версии.
+// Своё поле API добавляет к этой основе через `allOf`.
+type RequestEntityTooLarge = ProblemBase
+
 // UnprocessableEntity Отказ клиентского API: общая основа `problem+json` плюс поля, которые нужны
 // только покупателю, — товар, из-за которого отказан заказ, и его актуальная цена.
 type UnprocessableEntity = Problem
@@ -1147,6 +1152,8 @@ type GatewayTimeoutApplicationProblemPlusJSONResponse Problem
 
 type NotFoundApplicationProblemPlusJSONResponse ProblemBase
 
+type RequestEntityTooLargeApplicationProblemPlusJSONResponse ProblemBase
+
 type UnprocessableEntityApplicationProblemPlusJSONResponse Problem
 
 type PlaceOrderRequestObject struct {
@@ -1230,6 +1237,22 @@ func (response PlaceOrder409ApplicationProblemPlusJSONResponse) VisitPlaceOrderR
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PlaceOrder413ApplicationProblemPlusJSONResponse struct {
+	RequestEntityTooLargeApplicationProblemPlusJSONResponse
+}
+
+func (response PlaceOrder413ApplicationProblemPlusJSONResponse) VisitPlaceOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1404,6 +1427,22 @@ func (response CancelOrder409ApplicationProblemPlusJSONResponse) VisitCancelOrde
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrder413ApplicationProblemPlusJSONResponse struct {
+	RequestEntityTooLargeApplicationProblemPlusJSONResponse
+}
+
+func (response CancelOrder413ApplicationProblemPlusJSONResponse) VisitCancelOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
 	_, err := buf.WriteTo(w)
 	return err
 }

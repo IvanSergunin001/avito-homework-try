@@ -32,7 +32,7 @@ const (
 	// корзины, и мегабайта ему хватает с запасом; всё, что больше, площадка не разбирает,
 	// а отклоняет: тело неограниченного размера читается в память до того, как хоть одно
 	// правило предметной области успеет сказать, что запрос неверен.
-	maxRequestBodyBytes = 1 << 20
+	maxRequestBodyBytes = 1 * httpx.MB
 )
 
 // customerAPI обслуживает клиентское API площадки.
@@ -79,7 +79,7 @@ func mountCustomerAPI(r chi.Router, showcase *application.Showcase, log *slog.Lo
 func (a customerAPI) ListRestaurants(
 	ctx context.Context, request customer_v1.ListRestaurantsRequestObject,
 ) (customer_v1.ListRestaurantsResponseObject, error) {
-	paging, err := httpx.ResolvePaging(
+	page, err := domain.NewPage(
 		request.Params.Limit, request.Params.Offset, CustomerPageDefault, CustomerPageMax)
 	if err != nil {
 		return customer_v1.ListRestaurants400ApplicationProblemPlusJSONResponse{
@@ -88,23 +88,22 @@ func (a customerAPI) ListRestaurants(
 		}, nil
 	}
 
-	page, err := a.showcase.Restaurants(ctx,
-		application.Window{Limit: paging.Limit, Offset: paging.Offset})
+	catalog, err := a.showcase.Restaurants(ctx, page)
 	if err != nil {
 		return nil, err
 	}
 
-	items := make([]customer_v1.Restaurant, 0, len(page.Restaurants))
-	for _, restaurant := range page.Restaurants {
+	items := make([]customer_v1.Restaurant, 0, len(catalog.Restaurants))
+	for _, restaurant := range catalog.Restaurants {
 		items = append(items, customer_v1.Restaurant{Id: restaurant.ID, Name: restaurant.Name})
 	}
 
 	return customer_v1.ListRestaurants200JSONResponse{
 		Items: items,
 		Page: customer_v1.PageMeta{
-			Limit:  paging.Limit,
-			Offset: paging.Offset,
-			Total:  page.Total,
+			Limit:  page.Limit,
+			Offset: page.Offset,
+			Total:  catalog.Total,
 		},
 	}, nil
 }
@@ -191,7 +190,19 @@ func customerValidationProblem(err error) customer_v1.ProblemBase {
 
 // writeCustomerRequestProblem отвечает на неразобранный запрос — неверный uuid в пути,
 // нечисловой `limit`, неразбираемое тело.
+//
+// Тело, оборвавшееся на пределе, приезжает сюда же — разбор натыкается на него уже после
+// middleware, — и отдаётся тем же отказом, что и объявленная длина сверх предела: причина
+// у клиента одна, и знать, объявил он длину честно или прислал тело без длины вовсе, ему
+// незачем.
 func writeCustomerRequestProblem(w http.ResponseWriter, r *http.Request, err error) {
+	var oversized *http.MaxBytesError
+	if errors.As(err, &oversized) {
+		refuseOversizedCustomerBody(w, r)
+
+		return
+	}
+
 	problem.Write(r.Context(), w, http.StatusBadRequest, customerValidationProblem(err))
 }
 

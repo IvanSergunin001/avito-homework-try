@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -125,7 +126,38 @@ func asRefusal(t *testing.T, resp response, status int) problemDocument {
 func (p *platform) post(t *testing.T, path string, body []byte) response {
 	t.Helper()
 
-	resp, err := p.srv.Client().Post(p.srv.URL+path, "application/json", bytes.NewReader(body))
+	return p.send(t, path, bytes.NewReader(body))
+}
+
+// postWithoutDeclaredLength отправляет тело источником, длину которого клиент заранее не
+// знает: `Content-Length` в таком запросе нет вовсе, тело уходит chunked'ом, и предел на
+// размер проверяется уже чтением. Обёртка прячет `*bytes.Reader` за голым io.Reader —
+// иначе клиент вычислит длину сам и объявит её.
+//
+// Заголовок покупателя обязателен по контракту: без него запрос отказали бы на разборе
+// параметров, не дойдя до чтения тела, — а проверяется здесь как раз чтение.
+func (p *platform) postWithoutDeclaredLength(t *testing.T, path string, body []byte) response {
+	t.Helper()
+
+	return p.send(t, path, struct{ io.Reader }{bytes.NewReader(body)}, func(r *http.Request) {
+		r.Header.Set("User-Id", uuid.New().String())
+	})
+}
+
+// send отправляет тело на площадку и возвращает прочитанный ответ.
+func (p *platform) send(t *testing.T, path string, body io.Reader, prepare ...func(*http.Request)) response {
+	t.Helper()
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.srv.URL+path, body)
+	if err != nil {
+		t.Fatalf("собрать запрос POST %s: %v", path, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	for _, apply := range prepare {
+		apply(request)
+	}
+
+	resp, err := p.srv.Client().Do(request)
 	if err != nil {
 		t.Fatalf("запрос POST %s: %v", path, err)
 	}

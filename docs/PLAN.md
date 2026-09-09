@@ -57,13 +57,16 @@ Go 1.27, роутер `chi` (лёгкий, но идиоматичный: обы
 и в виде примитивов они разъезжаются по слоям, теряя проверки.
 Слои: `domain` (не импортирует инфраструктуру) → `application` (use cases) → `adapters`. Правило слоёв
 держит линтер `depguard` (`github.com/OpenPeeDeeP/depguard`, конфиг в `.golangci.yml`): запрет на импорт
-инфраструктуры из домена проверяется на каждом прогоне, а не держится на дисциплине.
+инфраструктуры из домена и из сценариев, запрет на обратный импорт адаптеров и граница между двумя
+контекстами проверяются на каждом прогоне, а не держатся на дисциплине. Контракты хранилищ объявляет домен
+(`domain.Restaurants`), а реализует адаптер: спрашивать про заведения площадка умеет по своим правилам,
+а не по возможностям PostgreSQL.
 
 ```
 cmd/platform, cmd/restaurant
 internal/platform/{domain, application, adapters/{http, postgres, restaurant_client}, migrations}
 internal/restaurant/{domain, application, adapters/{http, postgres, platform_client}, migrations}
-internal/pkg/{config, problem, logger, spec, testdb}
+internal/pkg/{config, httpx, logger, postgres, problem, spec, testdb}
 api/{customer,partner,admin,restaurant/operator,common}/v1/{openapi.yaml, paths/*.yaml, components/{schemas,parameters,responses}.yaml, bundle.yaml, codegen-*.yaml}
 api/{customer,partner}/v1/client.gen.go   api/go.mod
 docs/{PLAN.md, TASK.md, adr, puml, img}
@@ -101,7 +104,7 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 компоненты — словарь, который читают целиком.
 
 Общие схемы (основа `Problem`, список кодов, страница выдачи, деньги, количество, инициатор отмены), общие
-параметры (`User-Id`, `offset`, заголовки идемпотентности) и общие ответы (400, 401, 403, 404) не
+параметры (`User-Id`, `offset`, заголовки идемпотентности) и общие ответы (400, 401, 403, 404, 413) не
 дублируются, а лежат в `api/common/v1/components/` и подключаются `$ref`'ом из всех спек. Общий ответ несёт
 общую основу `ProblemBase`: у этих кодов документу нечего добавить сверх неё. Отказ по правилам предметной
 области (409 и его соседи) остаётся у документа — там в теле нужны позиция и цена, то есть свой `Problem`.
@@ -277,6 +280,7 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 | Код | Когда | Ответ |
 |---|---|---|
 | `validation_failed` | запрос не проходит проверку | 400 |
+| `validation_failed` | тело запроса больше допустимого предела (1 МБ) | 413 |
 | `unauthorized` | партнёрский ключ не передан или неизвестен | 401 |
 | `forbidden` | ключ опознан, но принадлежит другому заведению | 403 |
 | `restaurant_not_found`, `product_not_found`, `order_not_found` | сущности нет или она не видна вызывающему | 404 |
@@ -285,6 +289,11 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 | `not_implemented` | операция описана контрактом, обработчик подставляется своим этапом | 501 |
 | `internal_error` | необработанный отказ службы | 500 |
 | `restaurant_unavailable` | заведение недоступно или не ответило вовремя | 502/504 |
+
+Один и тот же `validation_failed` стоит и за `400`, и за `413`: ветка поведения у клиента одна — запрос не
+принят и его нужно исправить, — а код ответа говорит, чем именно. Отдельного кода под размер тела нет;
+сам ответ объявлен в `api/common/v1/components/responses.yaml#/RequestEntityTooLarge` и подключён к операциям
+с телом.
 
 Перечень живёт одним `enum`'ом в `api/common/v1/components/schemas.yaml` и оттуда попадает в
 сгенерированный код всех трёх документов; доменные константы обоих контекстов сверяются с ним тестом.
@@ -351,6 +360,7 @@ compose.yaml  Makefile  .golangci.yml  .env.example  .gitignore  README.md
 | Корзина на клиенте | не влияет на серверные инварианты | серверная корзина ради кросс-девайса и аналитики брошенных корзин |
 | Нет метрик, только логи | инфраструктуру мониторинга в MVP не поднимаем | метрики из раздела 16 + алерты |
 | Демо-данные seed-миграцией, адрес заведения — админ-ручкой | нет онбординг-флоу партнёра | полноценный онбординг с модерацией |
+| Витрина знает одно состояние заведения — `is_active` | «работает» на витрине означает подключённое и не снятое заведение; закрытие по часам работы видно на оформлении заказа отказом `restaurant_closed` — заведение само знает, принимает ли оно заказы сейчас | график работы в каталоге (`opens_at`/`closes_at` или расписание), второе условие в выдаче витрины и предупреждение «закрыто до 10:00» в карточке |
 
 ## 15. ADR
 

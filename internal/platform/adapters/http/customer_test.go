@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	customer "github.com/IvanSergunin001/Test157/api/customer/v1"
+	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	platformhttp "github.com/IvanSergunin001/Test157/internal/platform/adapters/http"
 )
 
@@ -329,7 +331,7 @@ func TestMenuIsAResourceOfItsOwnAndNotAPartOfTheCard(t *testing.T) {
 func TestRequestBodyLargerThanTheLimitIsRefusedWithoutBeingRead(t *testing.T) {
 	t.Parallel()
 
-	oversized := bytes.Repeat([]byte("a"), 2<<20)
+	oversized := bytes.Repeat([]byte("a"), 2*httpx.MB)
 
 	document := asRefusal(t, newPlatform(t).post(t,
 		platformhttp.CustomerAPIPrefix+"/orders", oversized), http.StatusRequestEntityTooLarge)
@@ -339,5 +341,52 @@ func TestRequestBodyLargerThanTheLimitIsRefusedWithoutBeingRead(t *testing.T) {
 	}
 	if document.Status != http.StatusRequestEntityTooLarge {
 		t.Errorf("в теле отказа status=%d, ожидали 413", document.Status)
+	}
+}
+
+// Тело без объявленной длины (chunked) отдаётся тем же отказом, что и объявленная длина
+// сверх предела: причина у клиента одна, и выбирать по ней ветку поведения он должен
+// одинаково, как бы тело ни было отправлено.
+func TestRequestBodyLargerThanTheLimitIsRefusedTheSameWayWhenItsLengthIsNotDeclared(t *testing.T) {
+	t.Parallel()
+
+	// Строка JSON, которой нет конца: разбор тела читает её, пока чтение не оборвётся на
+	// пределе. Мусор из одних букв оборвал бы разбор на первом же знаке, не дойдя до
+	// предела, — и проверялся бы не он.
+	oversized := append([]byte(`"`), bytes.Repeat([]byte("a"), httpx.MB+1024)...)
+
+	document := asRefusal(t, newPlatform(t).postWithoutDeclaredLength(t,
+		platformhttp.CustomerAPIPrefix+"/orders", oversized), http.StatusRequestEntityTooLarge)
+
+	if document.Code != string(customer.ValidationFailed) {
+		t.Errorf("код отказа %q, ожидали %q", document.Code, customer.ValidationFailed)
+	}
+	if strings.Contains(document.Detail, "http: request body too large") {
+		t.Errorf("в detail протекло сообщение стандартной библиотеки: %q", document.Detail)
+	}
+}
+
+// Отказ по вине площадки отдаётся в том же формате с кодом `internal_error`, но без
+// подробностей: причина уходит в лог, а не наружу.
+//
+// Площадка ломается по-настоящему — таблицей, которую читает витрина; репозиторий при этом
+// не подменяется. Соседние тесты это не задевает: база у каждого теста своя (см.
+// internal/pkg/testdb), и `DROP` виден только внутри неё.
+func TestFailureOnThePlatformSideIsRefusedWithoutTellingTheClientWhy(t *testing.T) {
+	t.Parallel()
+
+	platform := newPlatform(t)
+	if _, err := platform.db.ExecContext(t.Context(), `DROP TABLE platform.restaurants`); err != nil {
+		t.Fatalf("убрать таблицу заведений: %v", err)
+	}
+
+	document := platform.refusal(t,
+		platformhttp.CustomerAPIPrefix+"/restaurants", http.StatusInternalServerError)
+
+	if document.Code != string(customer.InternalError) {
+		t.Errorf("код отказа %q, ожидали %q", document.Code, customer.InternalError)
+	}
+	if strings.Contains(document.Detail, "platform.restaurants") {
+		t.Errorf("в detail попало устройство службы: %q", document.Detail)
 	}
 }

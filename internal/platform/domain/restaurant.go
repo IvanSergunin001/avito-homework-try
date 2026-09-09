@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"context"
 	"errors"
 
 	"github.com/google/uuid"
@@ -16,6 +17,30 @@ type Restaurant struct {
 	ID uuid.UUID
 	// Name — название заведения, как его видит покупатель.
 	Name string
+}
+
+// RestaurantPage — окно списка заведений вместе с общим числом записей: без него клиент
+// не знает, есть ли что листать дальше.
+type RestaurantPage struct {
+	// Restaurants — заведения запрошенного окна.
+	Restaurants []Restaurant
+	// Total — сколько всего заведений удовлетворяет запросу, а не сколько попало в окно.
+	Total int64
+}
+
+// Restaurants — контракт хранилища заведений. Он объявлен в домене, рядом с самим
+// заведением: что площадка умеет спрашивать про заведения — это её правило, а не свойство
+// PostgreSQL, и сценарии со схемой хранения через него не знакомятся.
+//
+// Обе операции отдают только работающие заведения: «неработающее» — это не состояние,
+// которое сценарий отфильтровывает после чтения, а часть самого запроса, иначе пагинация
+// считала бы страницы по записям, которых покупатель не видит.
+type Restaurants interface {
+	// ListWorking отдаёт окно списка работающих заведений и общее их число.
+	ListWorking(ctx context.Context, page Page) (RestaurantPage, error)
+	// FindWorking отдаёт работающее заведение по идентификатору. Если заведения нет или
+	// оно не работает — ErrRestaurantNotFound.
+	FindWorking(ctx context.Context, id uuid.UUID) (Restaurant, error)
 }
 
 // ErrRestaurantNotFound — заведения на площадке нет либо оно не работает. Одна ошибка на
