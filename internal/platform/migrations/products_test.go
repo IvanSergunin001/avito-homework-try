@@ -41,9 +41,10 @@ func TestRestaurantWithAMenuIsNotDeleted(t *testing.T) {
 		restaurantID, "Пекарня «Батон»", "http://restaurant:8081", "pk_MENUKEYMENUKEYMENUKEYMENU"); err != nil {
 		t.Fatalf("завести заведение: %v", err)
 	}
-	if _, err := db.ExecContext(t.Context(),
-		`INSERT INTO platform.products (id, restaurant_id, name, price) VALUES ($1, $2, $3, $4)`,
-		productID, restaurantID, "Багет", 12000); err != nil {
+	if _, err := db.ExecContext(t.Context(), `
+		INSERT INTO platform.products (id, restaurant_id, external_id, name, price)
+		VALUES ($1, $2, $3, $4, $5)`,
+		productID, restaurantID, "baget", "Багет", 12000); err != nil {
 		t.Fatalf("завести позицию меню: %v", err)
 	}
 

@@ -12,6 +12,7 @@ import (
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx"
 	"github.com/IvanSergunin001/Test157/internal/pkg/httpx/problem"
 	"github.com/IvanSergunin001/Test157/internal/platform/adapters/http/partner_v1"
+	"github.com/IvanSergunin001/Test157/internal/platform/application"
 )
 
 // PartnerAPIPrefix — префикс партнёрского API площадки: та половина контракта, которую
@@ -27,14 +28,15 @@ const PartnerAPIPrefix = "/api/kitchen/v1/partner"
 // Закрыто API уже сейчас: защита не приделывается к готовым ручкам задним числом — так и
 // появляется ручка, которую забыли закрыть.
 type partnerAPI struct {
-	log *slog.Logger
+	catalog *application.CatalogSync
+	log     *slog.Logger
 }
 
 // mountPartnerAPI монтирует партнёрское API на роутер площадки. Список маршрутов целиком
 // сгенерирован по спецификации: руками он не переписывается и разойтись с контрактом
 // не может.
-func mountPartnerAPI(r chi.Router, access guard, log *slog.Logger) {
-	api := partnerAPI{log: log}
+func mountPartnerAPI(r chi.Router, access guard, catalog *application.CatalogSync, log *slog.Logger) {
+	api := partnerAPI{catalog: catalog, log: log}
 
 	handler := partner_v1.NewStrictHandlerWithOptions(api, nil, partner_v1.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  partnerProblems.BadRequest,
@@ -97,15 +99,37 @@ func (a partnerAPI) GetIntegration(
 	}, nil
 }
 
-// Обе операции ниже описаны контрактом, их обработчики подставляются своими этапами:
-// внеочередное обновление каталога — #10, уведомление о смене статуса заказа — своим.
-
-func (partnerAPI) RefreshCatalog(
-	context.Context, partner_v1.RefreshCatalogRequestObject,
+// RefreshCatalog забирает меню заведения внеочередно — не дожидаясь очередного цикла
+// синхронизации.
+//
+// Заведение зовёт эту ручку затем, чтобы изменение цены или стоп-листа доехало до витрины
+// сразу, поэтому меню забирается прямо здесь, а не откладывается в очередь: отложенное
+// «немедленное обновление» отличалось бы от планового только названием.
+//
+// Ответ — `202` в любом случае, и это не небрежность, а контракт: заведение просит
+// площадку сходить за меню, а не сообщить, что она о нём думает. Неудачная выгрузка
+// каталога не касается вовсе — заведение остаётся на витрине с прежним меню, — и
+// рассказать о ней есть кому: она уходит в лог площадки.
+func (a partnerAPI) RefreshCatalog(
+	ctx context.Context, _ partner_v1.RefreshCatalogRequestObject,
 ) (partner_v1.RefreshCatalogResponseObject, error) {
-	return nil, httpx.ErrNotImplemented
+	partner, ok := partnerFromContext(ctx)
+	if !ok {
+		// Это ошибка сборки роутера, а не запроса: партнёрская ручка смонтирована в обход
+		// проверки ключа. Заведению она отдаётся как отказ по вине площадки.
+		return nil, errors.New("партнёрская операция выполнена без опознания заведения")
+	}
+
+	if err := a.catalog.Refresh(ctx, partner); err != nil {
+		a.log.WarnContext(ctx, "on-demand catalog sync failed",
+			slog.String("restaurant_id", partner.ID.String()), slog.Any("error", err))
+	}
+
+	return partner_v1.RefreshCatalog202Response{}, nil
 }
 
+// Уведомление о смене статуса заказа описано контрактом, его обработчик подставляется
+// своим этапом.
 func (partnerAPI) NotifyOrderStatus(
 	context.Context, partner_v1.NotifyOrderStatusRequestObject,
 ) (partner_v1.NotifyOrderStatusResponseObject, error) {
